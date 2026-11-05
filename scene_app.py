@@ -229,6 +229,8 @@ class SceneApp(ctk.CTk):
                 # Mode changes deliberately stop sound and projector output.
                 self.stage.audio.stop_all()
                 self.stage.projector.stop()
+                self.stage.web_audio.suspend()
+                self.stage.web_script.suspend()
                 self._turn_blackscreen_off()
                 self.stage.grid_remove()
             self.preparation_frame.grid()
@@ -613,18 +615,27 @@ def _packaging_self_test(report_path: Path, *, operation: tuple[str, str, str, s
         from scene_stage import StageWorkspace
         from scene_script import ScriptViewerFrame
         import pymupdf
-        import pythonmonkey
         report["stage_available"] = StageWorkspace is not None
         report["script_available"] = ScriptViewerFrame is not None
         report["pdf_available"] = bool(pymupdf.VersionBind)
-        from tkinterweb import HtmlFrame
-        web_probe = HtmlFrame(app, javascript_enabled=True, messages_enabled=False)
+        from scene_web import create_browser, webview2_runtime_version
+        report["web_engine"] = "tkwebview"
+        report["webview2_runtime"] = bool(webview2_runtime_version())
+        web_probe = create_browser(app)
         try:
-            web_probe.load_html('<p id="check">before</p><script>document.getElementById("check").textContent="JS works";</script>')
-            report["web_javascript"] = (pythonmonkey.eval("6 * 7") == 42 and
-                web_probe.document.getElementById("check").textContent == "JS works")
+            results = queue.Queue()
+            web_probe.bindjs("sceneProbe", lambda value: results.put(value))
+            web_probe.set_html('<p id="check">before</p><script>'
+                               'document.getElementById("check").textContent="JS works";'
+                               'window.sceneProbe(document.getElementById("check").textContent === "JS works"'
+                               ' && 6 * 7 === 42 && !!window.chrome.webview);</script>')
+            deadline = time.monotonic() + 15
+            while results.empty() and time.monotonic() < deadline:
+                app.update()
+                time.sleep(.01)
+            report["web_javascript"] = not results.empty() and results.get_nowait() is True
             if not report["web_javascript"]:
-                raise RuntimeError("Bundled PythonMonkey DOM JavaScript failed.")
+                raise RuntimeError("Bundled tkwebview WebView2 DOM JavaScript failed.")
         finally:
             web_probe.destroy()
         report["blackscreen_available"] = isinstance(app._blackscreen, BlackScreenController)

@@ -53,10 +53,26 @@ def cue_sort_key(path: Path | str) -> tuple:
 
 
 def list_media(folder: Path) -> list[Path]:
-    try:
-        return sorted((p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in MEDIA_EXTENSIONS), key=cue_sort_key)
-    except OSError as exc:
-        raise AppError(f"음원 폴더를 읽을 수 없습니다.\n{folder}\n{exc}") from exc
+    """List each directory's cues before its alphabetically ordered subfolders.
+
+    Linked directories are not followed: a junction back to a show's parent must
+    not duplicate its cues or recurse forever.
+    """
+    def visit(directory: Path) -> list[Path]:
+        try:
+            entries = list(directory.iterdir())
+            tracks = sorted((p for p in entries if p.suffix.lower() in MEDIA_EXTENSIONS and p.is_file()),
+                            key=lambda p: (cue_sort_key(p), p.name))
+            children = sorted((p for p in entries if p.is_dir() and not p.is_symlink()
+                               and not getattr(p, "is_junction", lambda: False)()),
+                              key=lambda p: (p.name.casefold(), p.name))
+        except OSError as exc:
+            raise AppError(f"음원 폴더를 읽을 수 없습니다.\n{directory}\n{exc}") from exc
+        for child in children:
+            tracks.extend(visit(child))
+        return tracks
+
+    return visit(Path(folder))
 
 
 def _number(value: object, name: str, minimum: float, maximum: float) -> float:
@@ -434,6 +450,8 @@ class StageAudioFrame(ctk.CTkFrame):
         self.selected: Path | None = None
         self.overrides: dict[str, dict] = {}
         self._rows: dict[Path, ctk.CTkFrame] = {}
+        self._folder_groups: dict[Path, tuple[ctk.CTkButton, ctk.CTkFrame]] = {}
+        self._expanded_folders: set[Path] = set()
         self._closed = False
         self._poll_id = None
         self._video_active = False
@@ -450,12 +468,12 @@ class StageAudioFrame(ctk.CTkFrame):
         label(top, text="음향 제어반", size=20, bold=True).grid(row=0, column=0, sticky="w")
         button(top, text="폴더 선택", compact=True, command=self._choose_folder).grid(row=0, column=1)
         button(top, text="새로고침", compact=True, command=self._reload).grid(row=0, column=2, padx=(6, 0))
-        self.folder_var = tk.StringVar(self, "폴더를 선택하면 BGM 번호 순으로 표시합니다.")
+        self.folder_var = tk.StringVar(self, "음원은 BGM 번호순, 하위 폴더는 이름순으로 표시합니다.")
         label(self, textvariable=self.folder_var, muted=True, wraplength=430).grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 8))
         self.list_frame = ctk.CTkScrollableFrame(self, fg_color=BACKGROUND, corner_radius=8)
         self.list_frame.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 8))
         self.list_frame.columnconfigure(0, weight=1)
-        self._empty = label(self.list_frame, text="준비한 음원과 영상을 같은 폴더에 모아 주세요.", muted=True, wraplength=400)
+        self._empty = label(self.list_frame, text="음원 / 영상 폴더를 선택하세요. 하위 폴더도 함께 불러옵니다.", muted=True, wraplength=400)
         self._empty.grid(row=0, column=0, padx=12, pady=20)
         current = ctk.CTkFrame(self, fg_color="#eaf1fc", corner_radius=8)
         current.grid(row=3, column=0, sticky="ew", padx=12, pady=(0, 12))
@@ -520,20 +538,14 @@ class StageAudioFrame(ctk.CTkFrame):
         folder = Path(folder).resolve()
         tracks = list_media(folder)
         overrides: dict[str, dict] = {}
-        settings_file = folder / CUE_SETTINGS_FILE
-        if settings_file.exists():
-            try:
-                raw = json.loads(settings_file.read_text(encoding="utf-8"))
-                if not isinstance(raw, dict):
-                    raise ValueError("설정은 JSON 객체여야 합니다.")
-                for name, data in raw.items():
-                    if not isinstance(data, dict):
-                        raise ValueError(f"{name}: 음원 설정을 읽을 수 없습니다.")
-                    TrackSettings.from_dict(data, self.defaults)
-                    overrides[name] = data
-            except (OSError, ValueError, AppError) as exc:
-                raise AppError(f"음원별 설정 파일을 확인하세요.\n{settings_file}\n{exc}") from exc
+        for directory in sorted({folder, *(path.parent for path in tracks)}):
+            for name, data in self._read_directory_settings(directory).items():
+                overrides[(directory.relative_to(folder) / name).as_posix()] = data
+        if self.folder != folder:
+            self._expanded_folders.clear()
         self.folder, self.tracks, self.overrides = folder, tracks, overrides
+        if self.selected not in tracks:
+            self.selected = None
         self._pending = None
         self.folder_var.set(f"{folder} · {len(tracks)}개")
         for path in tracks:
@@ -542,32 +554,80 @@ class StageAudioFrame(ctk.CTkFrame):
         for child in self.list_frame.winfo_children():
             child.destroy()
         self._rows.clear()
+        self._folder_groups.clear()
         if not tracks:
             label(self.list_frame, text="지원하는 음원 / 영상 파일이 없습니다.", muted=True).grid(row=0, column=0, padx=12, pady=20)
-        for index, path in enumerate(tracks):
-            row = ctk.CTkFrame(self.list_frame, fg_color="white", corner_radius=6)
-            row.grid(row=index, column=0, sticky="ew", pady=3)
-            row.columnconfigure(0, weight=1)
-            name = ("영상 · " if path.suffix.lower() in VIDEO_EXTENSIONS else "") + path.stem
-            title = label(row, text=name, bold=True, wraplength=230)
-            title.grid(row=0, column=0, sticky="ew", padx=(10, 4), pady=10)
-            tools = ctk.CTkFrame(row, fg_color="transparent")
-            tools.grid(row=0, column=1, sticky="e", padx=(0, 6), pady=8)
-            for col, (text, action) in enumerate((("페이드↑", "fade_in"), ("▶", "play"), ("Ⅱ", "pause"), ("■", "stop"), ("페이드↓", "fade_out"))):
-                tools.columnconfigure(col, weight=1)
-                control = button(tools, text=text, compact=True, command=lambda a=action, p=path: self._run(a, p))
-                control.configure(width=40 if action in {"fade_in", "fade_out"} else 28)
-                control.grid(row=0, column=col, sticky="ew", padx=2)
-            row.bind("<Configure>", lambda event, target=title: target.configure(wraplength=max(65, event.width - 250)), add="+")
-            for widget in (row, title):
-                widget.bind("<Button-1>", lambda _event, p=path: self._select(p), add="+")
-                widget.bind("<Double-Button-1>", lambda _event, p=path: self._run("play", p), add="+")
-                widget.bind("<Button-3>", lambda event, p=path: self._context(event, p), add="+")
-            self._rows[path] = row
+        grouped: dict[Path, list[Path]] = {folder: []}
+        for path in tracks:
+            grouped.setdefault(path.parent, []).append(path)
+            directory = path.parent
+            while directory != folder:
+                grouped.setdefault(directory, [])
+                directory = directory.parent
+        children: dict[Path, list[Path]] = {directory: [] for directory in grouped}
+        for directory in grouped:
+            if directory != folder:
+                children[directory.parent].append(directory)
+        self._expanded_folders.intersection_update(grouped)
+
+        def render(directory: Path, parent) -> None:
+            for index, path in enumerate(grouped[directory]):
+                self._make_track_row(parent, index, path)
+            index = len(grouped[directory])
+            for child in sorted(children[directory], key=lambda p: (p.name.casefold(), p.name)):
+                expanded = child in self._expanded_folders
+                header = button(parent, text=f"{'▼' if expanded else '▶'} {child.name}", compact=True,
+                                anchor="w", command=lambda p=child: self._toggle_folder(p))
+                header.grid(row=index, column=0, sticky="ew", pady=(6, 3))
+                body = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=0)
+                body.grid(row=index + 1, column=0, sticky="ew", padx=(14, 0))
+                body.columnconfigure(0, weight=1)
+                self._folder_groups[child] = (header, body)
+                render(child, body)
+                if not expanded:
+                    body.grid_remove()
+                index += 2
+
+        render(folder, self.list_frame)
         self._highlight_selected()
+
+    def _make_track_row(self, parent, index: int, path: Path) -> None:
+        row = ctk.CTkFrame(parent, fg_color="white", corner_radius=6)
+        row.grid(row=index, column=0, sticky="ew", pady=3)
+        row.columnconfigure(0, weight=1)
+        name = ("영상 · " if path.suffix.lower() in VIDEO_EXTENSIONS else "") + path.stem
+        title = label(row, text=name, bold=True, wraplength=230)
+        title.grid(row=0, column=0, sticky="ew", padx=(10, 4), pady=10)
+        tools = ctk.CTkFrame(row, fg_color="transparent")
+        tools.grid(row=0, column=1, sticky="e", padx=(0, 6), pady=8)
+        for col, (text, action) in enumerate((("페이드↑", "fade_in"), ("▶", "play"), ("Ⅱ", "pause"), ("■", "stop"), ("페이드↓", "fade_out"))):
+            tools.columnconfigure(col, weight=1)
+            control = button(tools, text=text, compact=True, command=lambda a=action, p=path: self._run(a, p))
+            control.configure(width=40 if action in {"fade_in", "fade_out"} else 28)
+            control.grid(row=0, column=col, sticky="ew", padx=2)
+        row.bind("<Configure>", lambda event, target=title: target.configure(wraplength=max(65, event.width - 250)), add="+")
+        for widget in (row, title):
+            widget.bind("<Button-1>", lambda _event, p=path: self._select(p), add="+")
+            widget.bind("<Double-Button-1>", lambda _event, p=path: self._run("play", p), add="+")
+            widget.bind("<Button-3>", lambda event, p=path: self._context(event, p), add="+")
+        self._rows[path] = row
+
+    def _toggle_folder(self, directory: Path) -> None:
+        header, body = self._folder_groups[directory]
+        if directory in self._expanded_folders:
+            self._expanded_folders.remove(directory)
+            body.grid_remove()
+            header.configure(text=f"▶ {directory.name}")
+        else:
+            self._expanded_folders.add(directory)
+            body.grid()
+            header.configure(text=f"▼ {directory.name}")
 
     def _select(self, path: Path) -> None:
         self.selected = path
+        for directory in reversed(path.parents):
+            if directory in self._folder_groups and directory not in self._expanded_folders:
+                self._toggle_folder(directory)
         self._highlight_selected()
         self._refresh_transport()
 
@@ -585,7 +645,55 @@ class StageAudioFrame(ctk.CTkFrame):
             menu.grab_release()
 
     def track_settings(self, path: Path) -> TrackSettings:
-        return TrackSettings.from_dict(self.overrides.get(path.name), self.defaults)
+        if self.folder and path.is_relative_to(self.folder):
+            values = self.overrides.get(self._track_key(path))
+        else:
+            # Playback can continue from a previous show after choosing a new
+            # folder. Its settings still belong to its actual source directory.
+            values = self._read_directory_settings(path.parent).get(path.name)
+        return TrackSettings.from_dict(values, self.defaults)
+
+    def _read_directory_settings(self, directory: Path) -> dict[str, dict]:
+        settings_file = directory / CUE_SETTINGS_FILE
+        try:
+            raw = json.loads(settings_file.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                raise ValueError("설정은 JSON 객체여야 합니다.")
+            for name, data in raw.items():
+                if not isinstance(data, dict):
+                    raise ValueError(f"{name}: 음원 설정을 읽을 수 없습니다.")
+                TrackSettings.from_dict(data, self.defaults)
+            return raw
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError, AppError) as exc:
+            raise AppError(f"음원별 설정 파일을 확인하세요.\n{settings_file}\n{exc}") from exc
+
+    def _track_key(self, path: Path) -> str:
+        try:
+            return path.relative_to(self.folder).as_posix() if self.folder else path.name
+        except ValueError:
+            return path.name
+
+    def _save_track_settings(self, path: Path, values: dict | None) -> None:
+        """Keep same-name cues independent and retain per-directory settings files."""
+        local = self._read_directory_settings(path.parent)
+        if values is None:
+            local.pop(path.name, None)
+        else:
+            local[path.name] = asdict(TrackSettings.from_dict(values))
+        destination = path.parent / CUE_SETTINGS_FILE
+        temporary = destination.with_name(destination.name + ".tmp")
+        temporary.write_text(json.dumps(local, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(destination)
+        if self.folder and path.is_relative_to(self.folder):
+            updated = dict(self.overrides)
+            key = self._track_key(path)
+            if values is None:
+                updated.pop(key, None)
+            else:
+                updated[key] = local[path.name]
+            self.overrides = updated
 
     def _settings_selected(self) -> None:
         path = self.selected or self.transport.path
@@ -593,13 +701,17 @@ class StageAudioFrame(ctk.CTkFrame):
             self._settings_dialog(path)
 
     def _settings_dialog(self, path: Path) -> None:
+        try:
+            values = asdict(self.track_settings(path))
+        except AppError as exc:
+            self._error(exc)
+            return
         dialog = ctk.CTkToplevel(self)
         dialog.title("이 음원 설정")
         dialog.geometry("440x510")
         dialog.transient(self.winfo_toplevel())
         dialog.columnconfigure(1, weight=1)
         label(dialog, text=path.name, bold=True, wraplength=400).grid(row=0, column=0, columnspan=2, sticky="w", padx=16, pady=14)
-        values = asdict(self.track_settings(path))
         descriptions = {"default_volume": "일반 재생 기본 볼륨 (%)", "fade_in_seconds": "페이드인 시간 (초)",
                         "fade_in_from": "페이드인 시작 (%)", "fade_in_to": "페이드인 종료 (%)",
                         "fade_out_seconds": "페이드아웃 시간 (초)", "fade_out_from": "페이드아웃 시작 (%)",
@@ -615,16 +727,7 @@ class StageAudioFrame(ctk.CTkFrame):
 
         def save(reset=False):
             try:
-                updated = dict(self.overrides)
-                if reset:
-                    updated.pop(path.name, None)
-                else:
-                    updated[path.name] = asdict(TrackSettings.from_dict({k: v.get() for k, v in variables.items()}))
-                destination = path.parent / CUE_SETTINGS_FILE
-                temporary = destination.with_name(destination.name + ".tmp")
-                temporary.write_text(json.dumps(updated, ensure_ascii=False, indent=2), encoding="utf-8")
-                temporary.replace(destination)
-                self.overrides = updated
+                self._save_track_settings(path, None if reset else {k: v.get() for k, v in variables.items()})
                 dialog.destroy()
             except (OSError, AppError) as exc:
                 error_var.set(str(exc))
@@ -636,9 +739,18 @@ class StageAudioFrame(ctk.CTkFrame):
     def _resolve_target(self, target: str) -> Path | None:
         if not target:
             return (self._video_path if self._video_active else self.transport.path) or self.selected
+        target = target.strip().replace("\\", "/")
+        if "/" in target and self.__dict__.get("folder"):
+            relative_target = target.removeprefix("./").casefold()
+            qualified = [p for p in self.tracks if self._track_key(p).casefold() == relative_target
+                         or Path(self._track_key(p)).with_suffix("").as_posix().casefold() == relative_target]
+            if len(qualified) == 1:
+                return qualified[0]
         exact = [p for p in self.tracks if p.name.casefold() == target.casefold() or p.stem.casefold() == target.casefold()]
         if len(exact) == 1:
             return exact[0]
+        if len(exact) > 1:
+            raise AppError(f"같은 이름의 음원이 여러 개입니다: {target}\n하위 폴더를 포함한 파일명을 지정하세요. (예: 오프닝/{exact[0].name})")
         number_text = re.sub(r"^bgm", "", target.strip(), flags=re.IGNORECASE)
         if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", number_text):
             matches = [p for p in self.tracks if cue_number(p) == Decimal(number_text)]

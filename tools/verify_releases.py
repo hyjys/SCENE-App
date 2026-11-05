@@ -25,6 +25,11 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 VARIANTS = {
     "scene": ("scene-app.zip", "SCENE-App", "sceneapp.exe"),
 }
+LEGACY_WEB_PACKAGES = frozenset({
+    "tkinterweb", "tkinterweb-tkhtml", "tkinterweb-tkhtml-extras", "pythonmonkey", "pminit",
+    "aiohttp", "aiohappyeyeballs", "aiosignal", "attrs", "frozenlist", "multidict",
+    "propcache", "pyreadline3", "yarl",
+})
 
 
 def require(condition: bool, message: str) -> None:
@@ -53,6 +58,17 @@ def verify_embedded_sources(executable: Path) -> dict:
     from PyInstaller.archive.readers import CArchiveReader
     archive = CArchiveReader(str(executable))
     pyz = archive.open_embedded_archive("PYZ.pyz")
+    retired_modules = {name.replace("-", "_") for name in LEGACY_WEB_PACKAGES}
+    require(not any(name.split(".", 1)[0] in retired_modules for name in pyz.toc),
+            "Frozen executable still contains retired browser modules")
+    native_libraries = {name.replace("\\", "/").lower() for name in archive.toc}
+    require("tkwebview/platform/win32/x64/webview.dll" in native_libraries,
+            "Frozen executable is missing the tkwebview native browser library")
+    require(any(name.rsplit("/", 1)[-1] == "msvcp140.dll" for name in native_libraries),
+            "Frozen executable is missing the native browser's MSVC runtime")
+    require(not any("mozjs" in name or name.startswith(("tkinterweb/", "pythonmonkey/", "pminit/"))
+                    for name in native_libraries),
+            "Frozen executable still contains retired browser libraries")
     paths = set(ROOT.glob("scene_*.py"))
     paths.update(ROOT / name for name in ("backend.py", "ui_theme.py", "ui_translations.py", "i18n.py"))
     checked = {}
@@ -66,14 +82,14 @@ def verify_embedded_sources(executable: Path) -> dict:
 
 
 def verify_source_archive() -> dict:
-    path = ROOT / "dist" / "SCENE-App-v0.4-source.zip"
+    path = ROOT / "dist" / "SCENE-App-v0.5-source.zip"
     expected_sha = path.with_suffix(".zip.sha256").read_text(encoding="ascii").split()[0]
     require(sha256(path) == expected_sha, "Source archive SHA-256 mismatch")
     with zipfile.ZipFile(path) as archive:
         require(archive.testzip() is None, "Corrupt source archive")
-        prefix = "SCENE-App-v0.4/"
+        prefix = "SCENE-App-v0.5/"
         manifest = json.loads(archive.read(prefix + "SOURCE-MANIFEST.json"))
-        require(manifest.get("version") == "0.4", "Stale source archive version")
+        require(manifest.get("version") == "0.5", "Stale source archive version")
         for name, expected in manifest["files"].items():
             source = (ROOT / name).resolve()
             require(source.is_relative_to(ROOT.resolve()), f"Unsafe source manifest path: {name}")
@@ -130,11 +146,19 @@ def verify_archive(variant: str, work_dir: Path) -> tuple[Path, dict]:
     require(manifest["variant"] == variant and manifest["executable"] == executable,
             f"Incorrect variant manifest: {source}")
     required = {executable, "ffmpeg.exe", "LICENSE", "THIRD_PARTY_SOURCES.md", "licenses/DENO-LICENSE.txt",
-                "licenses/CTkPDFViewer-LICENSE.txt",
+                "licenses/CTkPDFViewer-LICENSE.txt", "licenses/WEBVIEW-LICENSE.txt",
                 "assets/fonts/NanumGothic-Regular.ttf", "assets/fonts/NanumGothic-Bold.ttf", "assets/fonts/OFL.txt"}
     require(required.issubset(manifest["files"]), f"Incomplete file manifest: {source}")
     require(manifest.get("application") == "SCENE App", f"Wrong application: {source}")
-    require(manifest.get("version") == "0.4", f"Wrong release version: {source}")
+    require(manifest.get("version") == "0.5", f"Wrong release version: {source}")
+    dependencies = {name.lower().replace("_", "-"): version
+                    for name, version in manifest.get("dependencies", {}).items()}
+    require(dependencies.get("tkwebview") == "0.3.0", "tkwebview was not included in the release manifest")
+    require(not LEGACY_WEB_PACKAGES.intersection(dependencies),
+            "Release manifest still includes retired browser dependencies")
+    require(not any(name.startswith("licenses/" + package + "/")
+                    for name in manifest["files"] for package in LEGACY_WEB_PACKAGES),
+            "Release archive still includes retired browser licenses")
     require(not any((app_root / name).exists() for name in ("gui-yt-dlp.exe", "sceneaudiodown.exe")),
             "Legacy applications must not be included in SCENE App")
     require(not (app_root / "yt-dlp.exe").exists(), "SCENE App must use the embedded Python module")
@@ -160,7 +184,7 @@ def frozen_check(executable: Path, arguments: list[str], report_path: Path,
     require(report.get("frozen") is True, f"Check did not run a frozen executable: {executable}")
     require(Path(report["app_dir"]).resolve() == executable.parent.resolve(),
             f"Frozen executable uses the wrong application directory: {report['app_dir']}")
-    require(report.get("version") == "0.4", "Frozen app has the wrong version")
+    require(report.get("version") == "0.5", "Frozen app has the wrong version")
     require(report.get("variant") == "SCENE App", "Frozen app has the wrong product identity")
     require(report.get("blackscreen_available") is True, "Integrated blackscreen controls are missing")
     require(report.get("fonts", {}).get("family") == "NanumGothic", "Bundled Korean font was not applied")
@@ -169,7 +193,9 @@ def frozen_check(executable: Path, arguments: list[str], report_path: Path,
         require(report.get("stage_available") is True, "Stage audio controls were not bundled")
         require(report.get("script_available") is True, "Local script viewer was not bundled")
         require(report.get("pdf_available") is True, "PDF renderer was not bundled")
-        require(report.get("web_javascript") is True, "Embedded PythonMonkey JavaScript runtime did not run")
+        require(report.get("web_engine") == "tkwebview", "Frozen app is using the wrong browser engine")
+        require(report.get("webview2_runtime") is True, "Microsoft Edge WebView2 Runtime was not available")
+        require(report.get("web_javascript") is True, "Embedded WebView2 JavaScript runtime did not run")
         require(report.get("python_api") == "YoutubeDL", "The embedded yt_dlp API was not exercised")
         require(report.get("yt_dlp") == "2026.10.26", "Unexpected yt_dlp version")
         require(report.get("ejs_scripts", 0) >= 2, "Bundled EJS challenge scripts are missing")

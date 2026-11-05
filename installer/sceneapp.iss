@@ -7,7 +7,7 @@
 
 #define MyAppName "SCENE App"
 #ifndef AppVersion
-  #define AppVersion "0.4"
+  #define AppVersion "0.5"
 #endif
 #define MyAppVersion AppVersion
 #ifndef StageDir

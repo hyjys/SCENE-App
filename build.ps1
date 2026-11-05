@@ -34,13 +34,12 @@ try {
         --name sceneapp `
         --collect-all customtkinter `
         --collect-all yt_dlp_ejs `
-        --collect-all tkinterweb `
-        --collect-all tkinterweb_tkhtml `
-        --collect-all tkinterweb_tkhtml_extras `
-        --collect-all pythonmonkey `
-        --collect-all pminit `
-        --collect-all aiohttp `
-        --collect-all yarl `
+        --collect-all tkwebview `
+        --exclude-module tkinterweb `
+        --exclude-module tkinterweb_tkhtml `
+        --exclude-module tkinterweb_tkhtml_extras `
+        --exclude-module pythonmonkey `
+        --exclude-module pminit `
         --collect-all pymupdf `
         --collect-all docx `
         --collect-all PIL `

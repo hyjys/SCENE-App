@@ -1,4 +1,4 @@
-# SCENE App v0.4
+# SCENE App v0.5
 
 11월 공연 종료를 기념해 준비와 무대 운영을 한 앱에 담았습니다. 12월 공연부터 사용할 음향 제어반, 대본 뷰어, 프로젝터 제어와 설치형 업데이트를 추가했습니다. Windows 10/11 x64용입니다.
 
@@ -6,7 +6,7 @@
 
 ## 설치와 실행
 
-릴리스의 `sceneapp-0.4-windows-x64-setup.exe`를 실행해 사용자 계정에 설치하거나, `scene-app.zip` 전체를 쓰기 가능한 폴더에 풀고 `sceneapp.exe`를 실행합니다. `ffmpeg.exe`는 실행 파일과 같은 폴더에 둡니다. 배포본에는 Python, Deno, 문서·웹 라이브러리와 나눔고딕이 포함됩니다.
+릴리스의 `sceneapp-0.5-windows-x64-setup.exe`를 실행해 사용자 계정에 설치하거나, `scene-app.zip` 전체를 쓰기 가능한 폴더에 풀고 `sceneapp.exe`를 실행합니다. `ffmpeg.exe`는 실행 파일과 같은 폴더에 둡니다. 배포본에는 Python, Deno, 문서·웹 라이브러리와 나눔고딕이 포함됩니다. 웹 패널에는 **Microsoft Edge WebView2 Runtime**이 필요합니다. 설치되어 있지 않으면 앱의 안내에 따라 [Microsoft 공식 다운로드 페이지](https://developer.microsoft.com/microsoft-edge/webview2/#download-section)에서 설치하세요.
 
 ```text
 SCENE-App/
@@ -40,7 +40,7 @@ MP3는 오디오 전용 형식 중 최고 비트레이트를 선택해 **libmp3l
 
 ## 무대 모드: 음향 제어반
 
-왼쪽에서 음원·영상을 모아 둔 폴더를 선택합니다. `bgm1`, `bgm2`, `bgm2.5`, `bgm10` 순으로 번호를 숫자로 정렬하며 영상도 같은 번호 체계를 사용합니다. 목록은 스크롤할 수 있습니다.
+왼쪽에서 음원·영상을 모아 둔 폴더를 선택하면 **하위 폴더까지** 불러옵니다. 선택한 폴더에 바로 있는 파일을 먼저 표시하고, 오프닝·커튼콜 등 하위 폴더는 목록 맨 아래에 **알파벳순·가나다순**으로 묶어 표시합니다. 폴더 이름 옆 **삼각형(▶/▼)**을 눌러 펼치거나 접으며, 중첩된 하위 폴더도 같은 방식으로 탐색합니다. 각 폴더 안에서는 `bgm1`, `bgm2`, `bgm2.5`, `bgm10` 순으로 번호를 숫자로 정렬하며 영상도 같은 번호 체계를 사용합니다. 목록은 스크롤할 수 있습니다.
 
 각 행과 하단 현재 재생 영역에서 **재생 / 일시정지 / 정지 / 오토 페이드인 / 오토 페이드아웃**을 조작합니다. 하단에는 재생 위치·전체 시간, 탐색 바와 볼륨이 있습니다. 앱의 재생 볼륨을 조절하며 Windows 전체 볼륨을 바꾸지 않습니다.
 
@@ -72,9 +72,9 @@ SCENE BlackScreen 1.0의 화면 덮기 동작을 통합했으며 Epson PJ·DDC/C
 
 ## 로컬 / 웹·Google을 섞어 사용하기
 
-**앱 설정**에서 음향과 대본 소스를 각각 `local` 또는 `web`으로 지정하고 주소를 저장합니다. 각 패널에서도 로컬/웹 화면을 전환할 수 있어 한쪽만 웹으로 사용할 수 있습니다. 웹 주소를 입력하고 **열기**를 누르면 CustomTkinter 프레임 안의 **TkinterWeb**으로 표시합니다.
+**앱 설정**에서 음향과 대본 소스를 각각 `local` 또는 `web`으로 지정하고 주소를 저장합니다. 각 패널에서도 로컬/웹 화면을 전환할 수 있어 한쪽만 웹으로 사용할 수 있습니다. 웹 주소를 입력하고 **열기**를 누르면 CustomTkinter 프레임 안의 **tkwebview 0.3.0 / Microsoft Edge WebView2**로 표시합니다.
 
-`tkinterweb[recommended,javascript]`와 **PythonMonkey 1.4.1 / SpiderMonkey**로 JavaScript를 활성화합니다. 기본 JavaScript·DOM 처리는 확인했지만 전체 브라우저와 같은 웹 기능을 제공하지는 않습니다. Google 로그인, Docs 전체 편집기와 Drive 미디어 기능은 동작하지 않을 수 있습니다. 이 경우 **브라우저에서 열기**를 사용합니다.
+웹 패널은 Chromium 기반 WebView2의 JavaScript·DOM 엔진을 사용합니다. `tkwebview`는 `tkwebview2`의 후속 프로젝트이며 별도 Python JavaScript 엔진 없이 Google 검색·Docs·Drive 같은 웹 페이지를 표시합니다. Google에서 내장 브라우저 로그인을 제한하면 **브라우저에서 열기**를 사용하세요. WebView2 Runtime이 없으면 설치 안내를 표시하며 로컬 기능은 계속 사용할 수 있습니다.
 
 로그인 없이 읽을 수 있는 Google Docs 공유 링크는 **Google 대본 가져오기**로 텍스트를 내려받아 로컬 뷰어에서 표시·큐를 설정할 수 있습니다. Docs 서식을 가져오거나 Google 원본에 표시를 쓰지는 않습니다. 로그인 전용 문서는 브라우저에서 내려받아 여세요. Drive 음원을 로컬 제어반·대본 큐로 운영하려면 내려받아 음원 폴더에서 선택하세요. 웹 패널의 재생 버튼은 로컬 큐와 자동 연동하지 않습니다.
 
@@ -84,7 +84,7 @@ SCENE BlackScreen 1.0의 화면 덮기 동작을 통합했으며 Epson PJ·DDC/C
 
 준비 모드 시작 시 최신 정식 릴리스를 확인하며 앱 설정에서 자동 확인을 끌 수 있습니다. 상단 **업데이트 확인 → 업데이트 다운로드 → 앱 종료 후 설치** 순서로 진행합니다. 무대 모드에서는 업데이트를 설치하지 않습니다. 다운로드를 취소할 수 있으며 실제 설치는 버튼을 눌렀을 때 시작합니다.
 
-업데이터는 `hyjys/SCENE-App`의 최신 정식 GitHub Release에서 다음 이름을 인식합니다. 태그는 `v0.4`와 같은 숫자 버전을 사용합니다.
+업데이터는 `hyjys/SCENE-App`의 최신 정식 GitHub Release에서 다음 이름을 인식합니다. 태그는 `v0.5`와 같은 숫자 버전을 사용합니다.
 
 - `sceneapp-{version}-windows-x64.exe`
 - `sceneapp-{version}-windows-x64-setup.exe` — 이 저장소의 Inno 출력
@@ -116,7 +116,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -BuildInstaller 
 .\.venv\Scripts\python.exe tools\verify_releases.py
 ```
 
-출력은 `sceneapp.exe`, `dist/scene-app.zip`, `dist/SCENE-App-v0.4-source.zip`과 SHA-256 파일입니다. `-BuildInstaller`는 `dist/sceneapp-0.4-windows-x64-setup.exe`와 SHA-256을 추가합니다. `-IncludeDependencySources`는 고정된 PyPI 소스 묶음을 만듭니다. 릴리스에는 바이너리와 해당 프로젝트·의존성 및 네이티브 구성요소의 대응 소스를 함께 제공하세요.
+출력은 `sceneapp.exe`, `dist/scene-app.zip`, `dist/SCENE-App-v0.5-source.zip`과 SHA-256 파일입니다. `-BuildInstaller`는 `dist/sceneapp-0.5-windows-x64-setup.exe`와 SHA-256을 추가합니다. `-IncludeDependencySources`는 고정된 PyPI 소스 묶음을 만듭니다. 릴리스에는 바이너리와 해당 프로젝트·의존성 및 네이티브 구성요소의 대응 소스를 함께 제공하세요.
 
 ## 라이선스와 소스
 

@@ -1,4 +1,4 @@
-"""Package SCENE App v0.4, FFmpeg, fonts and redistribution notices."""
+"""Package SCENE App v0.5, FFmpeg, fonts and redistribution notices."""
 
 from __future__ import annotations
 
@@ -12,13 +12,11 @@ import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.4"
+VERSION = "0.5"
 RUNTIME_PACKAGES = (
     "customtkinter", "darkdetect", "packaging", "yt-dlp", "yt-dlp-ejs", "brotli", "certifi",
     "charset-normalizer", "idna", "mutagen", "pycryptodomex", "requests", "urllib3", "websockets",
-    "python-docx", "PyMuPDF", "Pillow", "lxml", "typing_extensions", "tkinterweb", "tkinterweb-tkhtml",
-    "tkinterweb-tkhtml-extras", "pythonmonkey", "pminit", "aiohttp", "pyreadline3",
-    "aiohappyeyeballs", "aiosignal", "attrs", "frozenlist", "multidict", "propcache", "yarl",
+    "python-docx", "PyMuPDF", "Pillow", "lxml", "typing_extensions", "tkwebview",
     "pyinstaller",
 )
 VARIANTS = {
@@ -39,13 +37,14 @@ def third_party_notices() -> str:
     )
     return (
         "Bundled third-party tools\n\n"
-        "SCENE App v0.4: GPL-3.0-or-later; see LICENSE.\n"
-        "Source: https://github.com/hyjys/SCENE-App/tree/v0.4\n"
+        "SCENE App v0.5: GPL-3.0-or-later; see LICENSE.\n"
+        "Source: https://github.com/hyjys/SCENE-App/tree/v0.5\n"
         "CustomTkinter: MIT; yt-dlp Python module: Unlicense; yt-dlp-ejs: Unlicense (bundled JS: MIT/ISC).\n"
         "Nanum Gothic Regular/Bold: SIL Open Font License 1.1; see assets/fonts/OFL.txt.\n"
-        "python-docx and TkinterWeb: MIT; Pillow: HPND; lxml: BSD-3-Clause.\n"
+        "python-docx and tkwebview: MIT; Pillow: HPND; lxml: BSD-3-Clause.\n"
         "PyMuPDF / MuPDF: AGPL-3.0-or-later; see licenses/PyMuPDF and upstream sources.\n"
-        "PythonMonkey/pminit: MIT; bundled SpiderMonkey: MPL-2.0; JS dependency notices: licenses/pminit.\n"
+        "tkwebview embeds the MIT-licensed Smart-Space/webview native library.\n"
+        "Microsoft Edge WebView2 Evergreen Runtime is installed separately; see THIRD_PARTY_SOURCES.md.\n"
         "FFmpeg: https://ffmpeg.org/\n"
         "FFmpeg Windows build: https://github.com/BtbN/FFmpeg-Builds\n"
         "Deno (embedded in the GUI executable): https://github.com/denoland/deno\n"
@@ -69,6 +68,7 @@ def package_variant(variant: str, notices: str) -> Path:
               (ROOT / "vendor" / "EJS-THIRD-PARTY-LICENSES.txt", "licenses/yt-dlp-ejs/JS-DEPENDENCIES.txt"),
               (ROOT / "docs" / "README.en.md", "README.en.md"),
               (ROOT / "docs" / "CTkPDFViewer-LICENSE.txt", "licenses/CTkPDFViewer-LICENSE.txt"),
+              (ROOT / "docs" / "WEBVIEW-LICENSE.txt", "licenses/WEBVIEW-LICENSE.txt"),
               (ROOT / "docs" / "FFMPEG-SOURCES.md", "docs/FFMPEG-SOURCES.md")]
     files += [(path, path.relative_to(ROOT).as_posix()) for path in sorted((ROOT / "assets" / "fonts").glob("*")) if path.is_file()]
     for package in RUNTIME_PACKAGES:
@@ -100,7 +100,7 @@ def package_variant(variant: str, notices: str) -> Path:
         "application": "SCENE App",
         "version": VERSION,
         "license": "GPL-3.0-or-later",
-        "source": "https://github.com/hyjys/SCENE-App/tree/v0.4",
+        "source": "https://github.com/hyjys/SCENE-App/tree/v0.5",
         "python": sys.version.split()[0],
         "dependencies": {name: importlib.metadata.version(name) for name in RUNTIME_PACKAGES},
         "variant": variant,
@@ -149,10 +149,10 @@ def package_source() -> Path:
     required = {
         "scene_app.py", "scene_blackscreen.py", "backend.py", "scene_backend.py",
         "scene_audio.py", "scene_script.py", "scene_updates.py", "scene_settings.py",
-        "scene_stage.py", "scene_projector.py", "scene_video.py", "installer/sceneapp.iss",
+        "scene_stage.py", "scene_web.py", "scene_projector.py", "scene_video.py", "installer/sceneapp.iss",
         "ui_theme.py", "ui_translations.py", "i18n.py", "build.ps1", "version_info.txt",
         "requirements-lock.txt", "LICENSE", "tools/package_variants.py",
-        "vendor/ffmpeg.json", "vendor/runtime.json",
+        "vendor/ffmpeg.json", "vendor/runtime.json", "docs/WEBVIEW-LICENSE.txt",
     }
     names = {path.relative_to(ROOT).as_posix() for path in sources}
     if missing := required - names:

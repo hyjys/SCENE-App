@@ -11,7 +11,7 @@ import customtkinter as ctk
 from ui_translations import tr
 
 
-VERSION = "0.4"
+VERSION = "0.5"
 FONT_FAMILY = "NanumGothic"
 BACKGROUND = "#f3f6fa"
 TEXT = "#17253d"

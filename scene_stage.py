@@ -19,7 +19,8 @@ from scene_audio import StageAudioFrame
 from scene_script import ScriptViewerFrame
 from scene_projector import ProjectorController
 from scene_settings import DEFAULTS, ENCODERS, PRESETS, settings_path
-from ui_theme import font, button, label, BACKGROUND
+from scene_web import WEBVIEW2_DOWNLOAD_URL, create_browser
+from ui_theme import VERSION, font, button, label, BACKGROUND
 
 
 def web_url(value):
@@ -36,6 +37,7 @@ class WebPanel(ctk.CTkFrame):
         self.on_error, self.on_import = on_error, on_import
         self.url = tk.StringVar(self, url)
         self.browser = None
+        self._closed = False
         self.columnconfigure(0, weight=1)
         self.rowconfigure(2, weight=1)
         ctk.CTkEntry(self, textvariable=self.url, font=font(), height=32).grid(row=0, column=0, sticky="ew", padx=8, pady=8)
@@ -43,23 +45,29 @@ class WebPanel(ctk.CTkFrame):
         bar = ctk.CTkFrame(self, fg_color="transparent")
         bar.grid(row=1, column=0, columnspan=2, sticky="ew", padx=8)
         button(bar, text="브라우저에서 열기", width=135, command=self.external).pack(side="left", padx=(0,5))
+        self.runtime_button = button(bar, text="WebView2 설치", width=115,
+                                     command=lambda: webbrowser.open(WEBVIEW2_DOWNLOAD_URL))
         if on_import:
             button(bar, text="Google 대본 가져오기", width=150, command=lambda: on_import(self.url.get())).pack(side="left")
         self.host = ctk.CTkFrame(self, fg_color="white")
         self.host.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=8, pady=8)
-        self.placeholder = label(self.host, text="주소를 입력하고 열기를 누르세요.\nPythonMonkey JavaScript 사용 · 웹사이트별 호환성 차이 있음", wraplength=380, muted=True)
+        self.placeholder = label(self.host, text="주소를 입력하고 열기를 누르세요.\nMicrosoft Edge WebView2", wraplength=380, muted=True)
         self.placeholder.pack(padx=12, pady=24)
 
     def load(self):
+        if self._closed:
+            return
         try:
             url = web_url(self.url.get())
             if self.browser is None:
-                from tkinterweb import HtmlFrame
-                self.browser = HtmlFrame(self.host, messages_enabled=True, javascript_enabled=True)
-                self.placeholder.pack_forget()
+                self.browser = create_browser(self.host)
                 self.browser.pack(fill="both", expand=True)
-            self.browser.load_url(url)
+            self.browser.navigate(url)
+            self.placeholder.pack_forget()
+            self.runtime_button.pack_forget()
         except Exception as exc:
+            if self.browser is None:
+                self.runtime_button.pack(side="left", padx=5)
             self.on_error(str(exc))
 
     def external(self):
@@ -69,8 +77,21 @@ class WebPanel(ctk.CTkFrame):
             self.on_error(str(exc))
 
     def close(self):
-        if self.browser:
-            self.browser.stop()
+        if self._closed:
+            return
+        self._closed = True
+        self.suspend()
+
+    def suspend(self):
+        """Dispose hidden web media; retain the entered URL and shared profile."""
+        if self.browser is not None:
+            self.browser.destroy()
+            self.browser = None
+        self.placeholder.pack(padx=12, pady=24)
+
+    def destroy(self):
+        self.close()
+        super().destroy()
 
 
 class StageWorkspace(ctk.CTkFrame):
@@ -138,6 +159,7 @@ class StageWorkspace(ctk.CTkFrame):
     @staticmethod
     def _show(side, local, web, value):
         if value == "로컬":
+            web.suspend()
             web.grid_remove()
             local.grid()
         else:
@@ -220,7 +242,7 @@ class StageWorkspace(ctk.CTkFrame):
         self.projector_status.set("Google 대본을 가져오고 있습니다…")
         def worker():
             try:
-                req = Request(f"https://docs.google.com/document/d/{document_id}/export?format=txt", headers={"User-Agent":"SCENE-App/0.4"})
+                req = Request(f"https://docs.google.com/document/d/{document_id}/export?format=txt", headers={"User-Agent":f"SCENE-App/{VERSION}"})
                 with urlopen(req, timeout=20) as response:
                     data = response.read(10*1024*1024+1)
                     if len(data)>10*1024*1024 or "text/html" in response.headers.get("Content-Type", ""):

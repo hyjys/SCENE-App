@@ -3,5 +3,4 @@ yt-dlp[default]==2026.10.26
 python-docx==1.2.0
 PyMuPDF==1.28.2
 Pillow==13.0.0
-tkinterweb[recommended,javascript]==4.25.5
-pythonmonkey==1.4.1
+tkwebview==0.3.0

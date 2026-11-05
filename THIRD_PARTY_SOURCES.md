@@ -1,22 +1,22 @@
-# Third-party source and redistribution information — v0.4
+# Third-party source and redistribution information — v0.5
 
 The application code is GPL-3.0-or-later, copyright (C) 2026 hyjys.
 Project source, build scripts, font assets and tests:
-https://github.com/hyjys/SCENE-App/tree/v0.4
+https://github.com/hyjys/SCENE-App/tree/v0.5
 Release archives (binaries, project source and dependency source):
-https://github.com/hyjys/SCENE-App/releases/tag/v0.4
+https://github.com/hyjys/SCENE-App/releases/tag/v0.5
 
 External components retain their own copyright and license. Each portable ZIP
 includes LICENSE, licenses/, and the original Nanum Gothic OFL notice. The
 manifest records the exact component versions and distributed file hashes.
-`SCENE-App-v0.4-source.zip` includes the application sources, build scripts, tests,
+`SCENE-App-v0.5-source.zip` includes the application sources, build scripts, tests,
 font assets, dependency manifests, and matching FFmpeg source/build-recipe archives.
 The separately supplied Python source ZIP below contains the pinned PyPI sources.
 No third-party license is replaced by the application's GPL notice.
 
 ## Python packages
 
-`third-party-python-sources-v0.4.zip` on the same release contains the original
+`third-party-python-sources-v0.5.zip` on the same release contains the original
 source distributions for the versions below, with an upstream URL and verified
 SHA-256 for each file. `tools/package_dependency_sources.py` recreates this ZIP.
 Use each PyPI release page's "Download files" / source distribution for an
@@ -43,20 +43,7 @@ independent copy. Build this application using README.md and requirements-lock.t
 | typing_extensions | 4.16.0 | PSF-2.0 | https://pypi.org/project/typing_extensions/4.16.0/#files |
 | PyMuPDF | 1.28.2 | AGPL-3.0; commercial alternative not used | https://pypi.org/project/PyMuPDF/1.28.2/#files |
 | Pillow | 13.0.0 | MIT-CMU; bundled image libraries retain their notices | https://pypi.org/project/Pillow/13.0.0/#files |
-| TkinterWeb | 4.25.5 | MIT | https://pypi.org/project/tkinterweb/4.25.5/#files |
-| tkinterweb-tkhtml | 2.3.0 | MIT; included native components retain their notices | https://pypi.org/project/tkinterweb-tkhtml/2.3.0/#files |
-| tkinterweb-tkhtml-extras | 1.5.0 | MIT; included native components retain their notices | https://pypi.org/project/tkinterweb-tkhtml-extras/1.5.0/#files |
-| PythonMonkey | 1.4.1 | MIT; incorporated PSF/Node/MPL notices | https://pypi.org/project/pythonmonkey/1.4.1/#files |
-| pminit | 1.4.1 | MIT | https://pypi.org/project/pminit/1.4.1/#files |
-| aiohttp | 3.14.5 | Apache-2.0 AND MIT | https://pypi.org/project/aiohttp/3.14.5/#files |
-| aiohappyeyeballs | 2.7.1 | PSF-2.0 | https://pypi.org/project/aiohappyeyeballs/2.7.1/#files |
-| aiosignal | 1.4.0 | Apache-2.0 | https://pypi.org/project/aiosignal/1.4.0/#files |
-| attrs | 26.1.0 | MIT | https://pypi.org/project/attrs/26.1.0/#files |
-| frozenlist | 1.8.0 | Apache-2.0 | https://pypi.org/project/frozenlist/1.8.0/#files |
-| multidict | 7.2.1 | Apache-2.0 | https://pypi.org/project/multidict/7.2.1/#files |
-| propcache | 0.5.4 | Apache-2.0 | https://pypi.org/project/propcache/0.5.4/#files |
-| pyreadline3 | 3.5.6 | BSD | https://pypi.org/project/pyreadline3/3.5.6/#files |
-| yarl | 1.25.1 | Apache-2.0 | https://pypi.org/project/yarl/1.25.1/#files |
+| tkwebview | 0.3.0 | MIT; bundled webview DLL: MIT | https://pypi.org/project/tkwebview/0.3.0/#files |
 | PyInstaller bootloader | 6.22.3 | GPL with bootloader exception | https://pypi.org/project/pyinstaller/6.22.3/#files |
 
 The source archive is generated when `build.ps1 -IncludeDependencySources` or
@@ -97,30 +84,30 @@ Keep that archive and the relevant build instructions with the release's
 corresponding sources; do not describe the PyPI-only archive as a complete
 MuPDF source archive. Byte-for-byte reconstruction of upstream wheels is not claimed.
 
-## TkinterWeb, PythonMonkey and SpiderMonkey
+## tkwebview and Microsoft Edge WebView2
 
-The application uses TkinterWeb's `recommended,javascript` extras. PythonMonkey
-1.4.1 and pminit 1.4.1 provide JavaScript support. Their installed MIT license
-also retains incorporated CPython, Node.js and Mozilla notices. The PythonMonkey
-wheel includes `mozjs-136a1.dll`, Mozilla SpiderMonkey, under MPL-2.0 with its
-own incorporated notices. It is not covered solely by PythonMonkey's MIT license.
+The application embeds tkwebview 0.3.0, copyright (c) 2025 Smart-Space, under
+the MIT license. Its native `webview.dll` is based on Smart-Space's MIT-licensed
+webview fork and uses the installed Microsoft Edge WebView2 Runtime for Chromium
+rendering and JavaScript. The Python package and its DLL are bundled; the
+WebView2 Runtime is installed separately from Microsoft and retains Microsoft's
+own terms. The `pywebview` and `pythonnet` packages are not required.
 
-- [PythonMonkey v1.4.1 source and build files](https://github.com/Distributive-Network/PythonMonkey/tree/v1.4.1).
-- [Upstream license notices](https://github.com/Distributive-Network/PythonMonkey/blob/v1.4.1/LICENSE).
-- The tag's [mozcentral.version](https://github.com/Distributive-Network/PythonMonkey/blob/v1.4.1/mozcentral.version)
-  declares Mozilla revision `6bca861985ba51920c1cacc21986af01c51bd690`.
-  This is an upstream build reference, not independent verification that the
-  distributed wheel's DLL was compiled from precisely that revision.
-- [Mozilla source at the declared revision](https://hg.mozilla.org/mozilla-central/file/6bca861985ba51920c1cacc21986af01c51bd690/)
-  and [SpiderMonkey build instructions](https://firefox-source-docs.mozilla.org/js/build.html).
-- [Mozilla Public License 2.0](https://www.mozilla.org/en-US/MPL/2.0/).
-- [TkinterWeb sources](https://github.com/Andereoo/TkinterWeb)
-  and [JavaScript documentation](https://tkinterweb.readthedocs.io/en/latest/javascript.html).
+- [tkwebview 0.3.0 source distribution and wheel](https://pypi.org/project/tkwebview/0.3.0/#files).
+- [tkwebview Python sources and MIT notice](https://github.com/Smart-Space/tkwebview).
+- [Native webview fork, C++ sources and build files](https://github.com/Smart-Space/webview)
+  and its [MIT notice](https://github.com/Smart-Space/webview/blob/main/LICENSE).
+- [Original webview project](https://github.com/webview/webview) and
+  [webviewpy](https://github.com/HIllya51/webviewpy), identified by tkwebview's
+  upstream documentation as the basis of its wrapper and native library.
+- [Microsoft Edge WebView2 Runtime download](https://developer.microsoft.com/microsoft-edge/webview2/#download-section).
 
-Provide the matching SpiderMonkey source/build material and preserve native
-Tkhtml/extras notices when publishing the bundled wheels. Consult the pinned
-package sources for their native dependency and build provenance; a DLL name
-alone is not sufficient to identify an exact source revision.
+The tkwebview PyPI source distribution contains Python wrappers and prebuilt
+Windows DLLs; it does not contain the DLL's C++ sources. Preserve the Python and
+native MIT notices, and supply the native fork's source/build material alongside
+the PyPI sources when preparing a complete corresponding-source release. The
+upstream fork link does not independently establish the exact commit used for
+the wheel's prebuilt DLL; byte-for-byte reconstruction is not claimed.
 
 ## Python and Tcl/Tk
 
@@ -158,4 +145,3 @@ revisions, source code, build recipes (including external-library revisions),
 checksums and mirror instructions are documented in docs/FFMPEG-SOURCES.md.
 The build recipes are also provided with the source and binary release.
 See vendor/ffmpeg.json and tools/fetch_ffmpeg.py for reproducible download.
-

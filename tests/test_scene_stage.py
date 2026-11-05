@@ -90,6 +90,13 @@ class StageWorkspaceTests(unittest.TestCase):
         self.workspace._blackout(lambda: order.append("blackout"))
         self.assertEqual(order, ["stop_video", "blackout"])
 
+    def test_switching_web_panel_to_local_disposes_hidden_browser_media(self):
+        browser = Mock()
+        self.workspace.web_audio.browser = browser
+        self.workspace._show(self.workspace.left, self.workspace.audio, self.workspace.web_audio, "로컬")
+        browser.destroy.assert_called_once()
+        self.assertIsNone(self.workspace.web_audio.browser)
+
     def test_google_import_downloads_text_off_thread_and_opens_local_annotations(self):
         class Response:
             headers = {"Content-Type": "text/plain; charset=utf-8"}
@@ -127,6 +134,94 @@ class WebUrlTests(unittest.TestCase):
                 stage.web_url(value)
         self.assertEqual(stage.web_url(" https://drive.google.com/drive/u/0/ "),
                          "https://drive.google.com/drive/u/0/")
+
+
+class WebPanelTests(unittest.TestCase):
+    def setUp(self):
+        prepare_ui()
+        self.root = ctk.CTk()
+        self.root.withdraw()
+        self.errors = []
+        self.panel = stage.WebPanel(self.root, "https://www.google.com/", self.errors.append)
+        self.panel.pack(fill="both", expand=True)
+        self.addCleanup(self._cleanup)
+
+    def _cleanup(self):
+        self.panel.close()
+        for timer in self.root.tk.call("after", "info"):
+            self.root.tk.call("after", "cancel", timer)
+        self.root.destroy()
+
+    @staticmethod
+    def _browser(parent):
+        browser = ctk.CTkFrame(parent)
+        browser.navigate = Mock()
+        browser.destroy = Mock(wraps=browser.destroy)
+        return browser
+
+    def test_navigation_reuses_native_browser_for_google_pages(self):
+        with patch.object(stage, "create_browser", side_effect=self._browser) as create:
+            self.panel.load()
+            browser = self.panel.browser
+            browser.navigate.assert_called_once_with("https://www.google.com/")
+            self.panel.url.set("https://docs.google.com/")
+            self.panel.load()
+            create.assert_called_once_with(self.panel.host)
+            browser.navigate.assert_called_with("https://docs.google.com/")
+        self.assertEqual(self.errors, [])
+        self.assertFalse(self.panel.placeholder.pack_info() if self.panel.placeholder.winfo_manager() else {})
+
+    def test_invalid_address_never_creates_browser(self):
+        self.panel.url.set("javascript:alert(1)")
+        with patch.object(stage, "create_browser") as create:
+            self.panel.load()
+        create.assert_not_called()
+        self.assertEqual(len(self.errors), 1)
+
+    def test_missing_runtime_can_be_installed_and_retried(self):
+        browser = self._browser(self.panel.host)
+        with patch.object(stage, "create_browser", side_effect=[stage.AppError("WebView2 Runtime 필요"), browser]):
+            self.panel.load()
+            self.assertIsNone(self.panel.browser)
+            self.assertTrue(self.panel.runtime_button.pack_info())
+            self.assertTrue(self.panel.placeholder.pack_info())
+            with patch.object(stage.webbrowser, "open") as external:
+                self.panel.runtime_button.invoke()
+            external.assert_called_once_with(stage.WEBVIEW2_DOWNLOAD_URL)
+            self.panel.load()
+        browser.navigate.assert_called_once_with("https://www.google.com/")
+        self.assertFalse(self.panel.runtime_button.winfo_manager())
+        self.assertEqual(len(self.errors), 1)
+
+    def test_close_disposes_native_browser_once_and_blocks_later_navigation(self):
+        with patch.object(stage, "create_browser", side_effect=self._browser) as create:
+            self.panel.load()
+            browser = self.panel.browser
+            self.panel.close()
+            self.panel.close()
+            self.panel.load()
+        self.assertIsNone(self.panel.browser)
+        browser.destroy.assert_called_once()
+        self.assertEqual(create.call_count, 1)
+
+    def test_external_browser_remains_available_without_native_runtime(self):
+        with patch.object(stage.webbrowser, "open") as external:
+            self.panel.external()
+        external.assert_called_once_with("https://www.google.com/")
+        self.assertIsNone(self.panel.browser)
+
+    def test_hidden_browser_is_disposed_and_can_be_reopened(self):
+        with patch.object(stage, "create_browser", side_effect=self._browser) as create:
+            self.panel.load()
+            old_browser = self.panel.browser
+            self.panel.suspend()
+            old_browser.destroy.assert_called_once()
+            self.assertIsNone(self.panel.browser)
+            self.assertTrue(self.panel.placeholder.pack_info())
+            self.panel.load()
+            self.assertEqual(create.call_count, 2)
+            self.assertIsNot(self.panel.browser, old_browser)
+        self.assertEqual(self.errors, [])
 
 
 class AppModeIntegrationTests(unittest.TestCase):
@@ -195,6 +290,18 @@ class AppModeIntegrationTests(unittest.TestCase):
         self.assertIsNone(audio.transport.path)
         self.app._select_app_mode("준비 모드")
         self.assertEqual(self.app.app_mode, "준비 모드")
+
+    def test_leaving_stage_disposes_both_web_browsers_and_keeps_urls(self):
+        self.app._select_app_mode("무대 모드")
+        browsers = [Mock(), Mock()]
+        for panel, browser in zip((self.app.stage.web_audio, self.app.stage.web_script), browsers):
+            panel.browser = browser
+            panel.url.set("https://drive.google.com/")
+        self.app._select_app_mode("준비 모드")
+        for panel, browser in zip((self.app.stage.web_audio, self.app.stage.web_script), browsers):
+            browser.destroy.assert_called_once()
+            self.assertIsNone(panel.browser)
+            self.assertEqual(panel.url.get(), "https://drive.google.com/")
 
     def test_script_body_keeps_more_room_than_compact_cue_list(self):
         self.app._select_app_mode("무대 모드")

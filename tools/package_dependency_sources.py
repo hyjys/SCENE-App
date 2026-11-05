@@ -1,4 +1,4 @@
-"""Archive the exact Python dependency sources beside the v0.4 binaries.
+"""Archive the exact Python dependency sources beside the v0.5 binaries.
 
 Downloads original PyPI source distributions, verifies PyPI's SHA-256 values,
 and includes installed license notices and a provenance manifest. Run with the
@@ -21,7 +21,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 CACHE = ROOT / "build" / "dependency-sources"
-OUTPUT = ROOT / "dist" / "third-party-python-sources-v0.4.zip"
+OUTPUT = ROOT / "dist" / "third-party-python-sources-v0.5.zip"
 MAX_SOURCE_BYTES = 200 * 1024 * 1024
 
 
@@ -52,7 +52,7 @@ def pinned_dependencies() -> dict[str, str]:
 def fetch_source(item: tuple[str, str]) -> tuple[dict, Path]:
     name, version = item
     api_url = f"https://pypi.org/pypi/{urllib.parse.quote(name)}/{urllib.parse.quote(version)}/json"
-    request = urllib.request.Request(api_url, headers={"User-Agent": "SCENE-App-v0.4-source-packager"})
+    request = urllib.request.Request(api_url, headers={"User-Agent": "SCENE-App-v0.5-source-packager"})
     with urllib.request.urlopen(request, timeout=30) as response:
         metadata = json.load(response)
     sources = sorted((entry for entry in metadata["urls"] if entry["packagetype"] == "sdist"),
@@ -77,7 +77,7 @@ def fetch_source(item: tuple[str, str]) -> tuple[dict, Path]:
     if not (destination.is_file() and destination.stat().st_size == expected_size
             and digest(destination) == expected_sha):
         temporary = destination.with_name(destination.name + ".part")
-        source_request = urllib.request.Request(url, headers={"User-Agent": "SCENE-App-v0.4-source-packager"})
+        source_request = urllib.request.Request(url, headers={"User-Agent": "SCENE-App-v0.5-source-packager"})
         try:
             with urllib.request.urlopen(source_request, timeout=30) as response, temporary.open("wb") as stream:
                 received = 0
@@ -127,7 +127,7 @@ def main() -> None:
     with ThreadPoolExecutor(max_workers=4) as executor:
         sources = list(executor.map(fetch_source, sorted(pins.items())))
     manifest = {
-        "application": "SCENE App", "version": "0.4",
+        "application": "SCENE App", "version": "0.5",
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "description": "Unmodified original PyPI source distributions for the exact Windows release dependencies.",
         "packages": [],
@@ -146,12 +146,12 @@ def main() -> None:
         archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
                          compress_type=zipfile.ZIP_DEFLATED)
         archive.writestr("README.txt", (
-            "Python dependency sources for SCENE App v0.4\n\n"
+            "Python dependency sources for SCENE App v0.5\n\n"
             "sources/ contains unmodified upstream source archives from PyPI.\n"
             "manifest.json records exact versions, download URLs and verified SHA-256 digests.\n"
             "licenses/ contains the license notices from the corresponding installed distributions.\n"
             "Each dependency retains its own upstream license.\n"
-            "Application source and build instructions: https://github.com/hyjys/SCENE-App/tree/v0.4\n"
+            "Application source and build instructions: https://github.com/hyjys/SCENE-App/tree/v0.5\n"
         ), compress_type=zipfile.ZIP_DEFLATED)
     with zipfile.ZipFile(temporary) as archive:
         corrupt = archive.testzip()

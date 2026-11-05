@@ -2,14 +2,19 @@
 
 from pathlib import Path
 import hashlib
+import json
+import queue
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 import wave
+
+import customtkinter as ctk
 
 from backend import AppError
 from scene_audio import AudioPreparation, AudioTransport, StageAudioFrame, TrackSettings, cue_number, cue_sort_key, format_time, list_media
+from ui_theme import prepare_ui
 
 
 class Scheduler:
@@ -98,6 +103,35 @@ class CueListTests(unittest.TestCase):
                 (folder / name).touch()
             (folder / "bgm0_fake.mp3").mkdir()
             self.assertEqual([p.name for p in list_media(folder)], ["bgm1_audio.mp3", "bgm2_video.MP4"])
+
+    def test_recursive_scan_keeps_root_cues_first_and_orders_each_folder_by_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            names = ["커튼콜/bgm1_last.mp3", "오프닝/효과음/bgm0_nested.wav", "오프닝/bgm10_end.mp3",
+                     "오프닝/bgm2_start.mp3", "Zulu/bgm0_z.mp4", "alpha/bgm0_a.MP3",
+                     "bgm10_main.mp3", "bgm2_main.wav", "bgm0_empty/script.txt"]
+            for name in names:
+                path = folder / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+            self.assertEqual([p.relative_to(folder).as_posix() for p in list_media(folder)], [
+                "bgm2_main.wav", "bgm10_main.mp3", "alpha/bgm0_a.MP3", "Zulu/bgm0_z.mp4",
+                "오프닝/bgm2_start.mp3", "오프닝/bgm10_end.mp3", "오프닝/효과음/bgm0_nested.wav",
+                "커튼콜/bgm1_last.mp3"])
+
+    def test_recursive_scan_does_not_follow_linked_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            (folder / "linked").mkdir()
+            (folder / "linked" / "bgm1_duplicated.mp3").touch()
+            (folder / "bgm2_main.wav").touch()
+            with patch.object(Path, "is_symlink", lambda path: path.name == "linked"):
+                self.assertEqual([p.name for p in list_media(folder)], ["bgm2_main.wav"])
+
+    def test_missing_folder_reports_the_folder_instead_of_an_empty_list(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(AppError, "음원 폴더를 읽을 수 없습니다"):
+                list_media(Path(directory) / "missing")
 
     def test_global_defaults_and_per_track_overrides_combine(self):
         global_defaults = TrackSettings.from_dict({"default_volume": 55, "fade_out_seconds": 8})
@@ -288,6 +322,177 @@ class FrameCueTests(unittest.TestCase):
         self.frame.execute_cue("play", "3")
         self.frame.on_video.assert_called_once_with(self.video)
         self.frame.on_video_action.assert_called_with("play", self.video, None)
+
+
+class FolderFrameTests(unittest.TestCase):
+    """Exercise real Tk group controls without opening audio devices or workers."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.folder = Path(self.temporary.name).resolve()
+        self.addCleanup(self.temporary.cleanup)
+        prepare_ui()
+        self.root = ctk.CTk()
+        self.root.withdraw()
+        self.errors = []
+        self.root.report_callback_exception = lambda *error: self.errors.append(error)
+        preparation = Mock(events=queue.Queue())
+        preparation.cached.side_effect = lambda path: path
+        self.preparation_patch = patch("scene_audio.AudioPreparation", return_value=preparation)
+        self.preparation_patch.start()
+        self.addCleanup(self.preparation_patch.stop)
+        self.frame = StageAudioFrame(self.root, {})
+        self.frame.pack(fill="both", expand=True)
+        self.frame.transport = AudioTransport(self.frame, FakePlayer(), on_change=self.frame._refresh_transport)
+        self.addCleanup(self._cleanup)
+
+    def _cleanup(self):
+        self.frame.destroy()
+        for timer in self.root.tk.call("after", "info"):
+            self.root.tk.call("after", "cancel", timer)
+        self.root.destroy()
+        self.assertEqual(self.errors, [])
+
+    def make_file(self, name):
+        path = self.folder / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+        return path
+
+    def test_root_rows_precede_sorted_collapsible_folders_with_nested_only_groups(self):
+        root_cue = self.make_file("bgm10_main.wav")
+        nested = self.make_file("오프닝/효과음/bgm1_nested.wav")
+        curtain = self.make_file("커튼콜/bgm0_end.wav")
+        english = self.make_file("alpha/bgm0_first.wav")
+        (self.folder / "empty").mkdir()
+        self.frame.load_folder(self.folder)
+        self.assertEqual(self.frame.tracks, [root_cue, english, nested, curtain])
+        groups = self.frame._folder_groups
+        self.assertEqual([path.relative_to(self.folder).as_posix() for path in groups],
+                         ["alpha", "오프닝", "오프닝/효과음", "커튼콜"])
+        root_row = int(self.frame._rows[root_cue].grid_info()["row"])
+        headers = [groups[self.folder / name][0] for name in ("alpha", "오프닝", "커튼콜")]
+        self.assertTrue(all(int(header.grid_info()["row"]) > root_row for header in headers))
+        self.assertEqual([int(header.grid_info()["row"]) for header in headers], [1, 3, 5])
+        header, body = groups[self.folder / "오프닝"]
+        self.assertFalse(body.grid_info())
+        self.assertTrue(header.cget("text").startswith("▶"))
+        header.invoke()
+        self.assertTrue(body.grid_info())
+        self.assertTrue(header.cget("text").startswith("▼"))
+        header.invoke()
+        self.assertFalse(body.grid_info())
+
+    def test_playing_a_hidden_nested_cue_reveals_it_and_collapse_does_not_stop_it(self):
+        nested = self.make_file("오프닝/효과음/bgm1_start.wav")
+        self.frame.load_folder(self.folder)
+        self.frame.execute_cue("play", "오프닝/효과음/bgm1_start.wav")
+        self.assertEqual(self.frame.transport.player.path, nested)
+        self.assertEqual(self.frame.selected, nested)
+        for directory in (nested.parent.parent, nested.parent):
+            self.assertTrue(self.frame._folder_groups[directory][1].grid_info())
+        self.frame._folder_groups[nested.parent.parent][0].invoke()
+        self.assertFalse(self.frame._folder_groups[nested.parent.parent][1].grid_info())
+        self.assertEqual(self.frame.transport.state, "playing")
+        self.frame._reload()
+        self.assertEqual(self.frame.transport.state, "playing")
+        self.assertNotIn(nested.parent.parent, self.frame._expanded_folders)
+        self.assertIn(nested.parent, self.frame._expanded_folders)
+
+    def test_relative_targets_disambiguate_duplicate_names_and_bgm_numbers(self):
+        main = self.make_file("bgm1_same.wav")
+        opening = self.make_file("오프닝/bgm1_same.wav")
+        self.frame.load_folder(self.folder)
+        for target in ("1", "bgm1_same", "bgm1_same.wav"):
+            with self.subTest(target=target), self.assertRaisesRegex(AppError, "여러 개"):
+                self.frame._resolve_target(target)
+        self.assertEqual(self.frame._resolve_target("오프닝\\bgm1_same.wav"), opening)
+        self.assertEqual(self.frame._resolve_target("오프닝/bgm1_same"), opening)
+        self.assertEqual(self.frame._resolve_target("./bgm1_same.wav"), main)
+
+    def test_same_named_tracks_retain_and_save_their_own_directory_settings(self):
+        main = self.make_file("bgm1_same.wav")
+        opening = self.make_file("오프닝/bgm1_same.wav")
+        curtain = self.make_file("커튼콜/bgm1_same.wav")
+        for path, volume in ((main, 20), (opening, 40), (curtain, 60)):
+            (path.parent / ".scene-audio.json").write_text(
+                json.dumps({path.name: {"default_volume": volume}}), encoding="utf-8")
+        self.frame.load_folder(self.folder)
+        self.assertEqual([self.frame.track_settings(path).default_volume for path in (main, opening, curtain)],
+                         [20, 40, 60])
+        self.frame._save_track_settings(opening, {"default_volume": 45})
+        self.assertEqual(self.frame.track_settings(opening).default_volume, 45)
+        saved = json.loads((opening.parent / ".scene-audio.json").read_text(encoding="utf-8"))
+        self.assertEqual(set(saved), {opening.name})
+        self.assertEqual(saved[opening.name]["default_volume"], 45)
+        self.frame.load_folder(self.folder)
+        self.assertEqual([self.frame.track_settings(path).default_volume for path in (main, opening, curtain)],
+                         [20, 45, 60])
+        self.frame._save_track_settings(opening, None)
+        self.frame.load_folder(self.folder)
+        self.assertEqual([self.frame.track_settings(path).default_volume for path in (main, opening, curtain)],
+                         [20, 100, 60])
+
+    def test_invalid_subfolder_settings_leave_the_loaded_show_unchanged(self):
+        main = self.make_file("bgm1_main.wav")
+        self.frame.load_folder(self.folder)
+        opening = self.make_file("오프닝/bgm2_start.wav")
+        (opening.parent / ".scene-audio.json").write_text('{"bgm2_start.wav": {"default_volume": 101}}', encoding="utf-8")
+        with self.assertRaisesRegex(AppError, "음원별 설정 파일"):
+            self.frame.load_folder(self.folder)
+        self.assertEqual(self.frame.tracks, [main])
+
+    def test_settings_for_audio_still_playing_after_folder_switch_preserve_both_shows(self):
+        playing = self.make_file("A/bgm1_same.wav")
+        other_a = self.make_file("A/bgm2_other.wav")
+        same_b = self.make_file("B/bgm1_same.wav")
+        other_b = self.make_file("B/bgm3_other.wav")
+        source_settings = {playing.name: {"default_volume": 23}, other_a.name: {"default_volume": 37}}
+        current_settings = {same_b.name: {"default_volume": 61}, other_b.name: {"default_volume": 79}}
+        source_file = playing.parent / ".scene-audio.json"
+        current_file = same_b.parent / ".scene-audio.json"
+        source_file.write_text(json.dumps(source_settings), encoding="utf-8")
+        current_file.write_text(json.dumps(current_settings), encoding="utf-8")
+        self.frame.load_folder(playing.parent)
+        self.frame.execute_cue("play", playing.name)
+        self.frame.load_folder(same_b.parent)
+        self.assertIsNone(self.frame.selected)
+        self.assertEqual(self.frame.transport.path, playing)
+        self.assertEqual(self.frame.track_settings(playing).default_volume, 23)
+        self.assertEqual(self.frame.track_settings(same_b).default_volume, 61)
+        with patch.object(self.frame, "_settings_dialog") as dialog:
+            self.frame._settings_selected()
+        dialog.assert_called_once_with(playing)
+        current_bytes = current_file.read_bytes()
+        current_overrides = dict(self.frame.overrides)
+
+        self.frame._save_track_settings(playing, {"default_volume": 45})
+        saved_source = json.loads(source_file.read_text(encoding="utf-8"))
+        self.assertEqual(set(saved_source), {playing.name, other_a.name})
+        self.assertEqual(saved_source[other_a.name], source_settings[other_a.name])
+        self.assertEqual(saved_source[playing.name]["default_volume"], 45)
+        self.assertEqual(self.frame.track_settings(playing).default_volume, 45)
+        self.assertEqual(current_file.read_bytes(), current_bytes)
+        self.assertEqual(self.frame.overrides, current_overrides)
+
+        self.frame._save_track_settings(playing, None)
+        self.assertEqual(json.loads(source_file.read_text(encoding="utf-8")), {other_a.name: source_settings[other_a.name]})
+        self.assertEqual(self.frame.track_settings(playing).default_volume, self.frame.defaults.default_volume)
+        self.assertEqual(current_file.read_bytes(), current_bytes)
+        self.assertEqual(self.frame.overrides, current_overrides)
+        self.assertEqual(self.frame.track_settings(same_b).default_volume, 61)
+        self.assertEqual(self.frame.transport.state, "playing")
+
+    def test_saving_track_settings_merges_with_new_entries_on_disk(self):
+        main = self.make_file("bgm1_main.wav")
+        other = self.make_file("bgm2_other.wav")
+        self.frame.load_folder(self.folder)
+        destination = self.folder / ".scene-audio.json"
+        destination.write_text(json.dumps({other.name: {"default_volume": 39}}), encoding="utf-8")
+        self.frame._save_track_settings(main, {"default_volume": 17})
+        saved = json.loads(destination.read_text(encoding="utf-8"))
+        self.assertEqual(saved[other.name], {"default_volume": 39})
+        self.assertEqual(saved[main.name]["default_volume"], 17)
 
 
 @unittest.skipUnless((Path(__file__).resolve().parents[1] / "ffmpeg.exe").is_file(), "Bundled FFmpeg required")

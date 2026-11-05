@@ -1,8 +1,8 @@
-# SCENE App v0.4
+# SCENE App v0.5
 
 The November performance update brings preparation and stage operation into one Windows 10/11 x64 application for the December performance: audio transport, scripts, projector video and installer updates.
 
-Install `sceneapp-0.4-windows-x64-setup.exe`, or extract all of `scene-app.zip` to a writable folder and run `sceneapp.exe`. Keep `ffmpeg.exe` beside it. Python, Deno, fonts and viewer libraries are bundled.
+Install `sceneapp-0.5-windows-x64-setup.exe`, or extract all of `scene-app.zip` to a writable folder and run `sceneapp.exe`. Keep `ffmpeg.exe` beside it. Python, Deno, fonts and viewer libraries are bundled. Web panels require **Microsoft Edge WebView2 Runtime**. If it is missing, follow the application's guidance to the [official Microsoft download page](https://developer.microsoft.com/microsoft-edge/webview2/#download-section).
 
 ## Preparation mode
 
@@ -12,7 +12,7 @@ Enter a cue number and title, then download a URL or convert a local file. MP3 i
 
 ## Stage mode
 
-Stage mode opens a maximized window. The left half lists a selected media folder in numeric cue order: bgm1, bgm2, bgm2.5, bgm10. Audio and video share the BGM numbering scheme. Each row and the current-track area provide play, pause, stop and fades. The current-track area includes seeking, elapsed/total time and volume.
+Stage mode opens a maximized window. The left half loads audio and video from the selected folder **and its subfolders**. Files directly in the selected folder appear first. Subfolders appear below them in alphabetical/Korean name order; click **▶/▼** beside a folder name to expand or collapse it. Nested folders work the same way. Files within each folder use numeric cue order: bgm1, bgm2, bgm2.5, bgm10. Audio and video share the BGM numbering scheme. Each row and the current-track area provide play, pause, stop and fades. The current-track area includes seeking, elapsed/total time and volume.
 
 Default fades are three seconds, 0→100% in and 100→0% out. Global settings define normal volume and fade duration/start/end levels. Right-click a file or use its settings button for overrides; restore global defaults to remove overrides. `.scene-audio.json` in the writable media folder stores them. Application volume does not change the system mixer.
 
@@ -32,7 +32,7 @@ Blackout integrates SCENE BlackScreen 1.0 behavior. Epson PJ and DDC/CI are excl
 
 ## Independent local/web sources
 
-Set audio and script sources independently in global settings or switch either panel locally. Web panels embed TkinterWeb inside CustomTkinter. The recommended and JavaScript extras include PythonMonkey 1.4.1/SpiderMonkey. Basic JavaScript and DOM handling have been checked; this is not a full browser. Google authentication, the full Docs editor and Drive media features may require **브라우저에서 열기** (open in browser).
+Set audio and script sources independently in global settings or switch either panel locally. Web panels embed **tkwebview 0.3.0 / Microsoft Edge WebView2** inside CustomTkinter. tkwebview succeeds tkwebview2 and uses Chromium's JavaScript/DOM engine to display Google Search, Docs, Drive and other websites. If Google restricts sign-in from embedded browsers, use **브라우저에서 열기** (open in browser). Missing WebView2 Runtime produces installation guidance; local features remain available.
 
 For a Google Docs share link readable without login, **Google 대본 가져오기** downloads plain text into the local viewer for annotations/cues. It does not synchronize notes or formatting back to Google. Download private documents through a browser, then open them locally. For local transport and script cues on Drive audio, download media into the selected folder. Web-page playback buttons do not automatically control the local cue engine.
 
@@ -42,13 +42,13 @@ Global configuration is `%APPDATA%\SCENE App\settings.json`; imported Google scr
 
 Preparation mode can check GitHub's latest stable release on startup; disable this in settings if desired. The header offers check, download and an explicit close-and-install step. Update installation is blocked in stage mode. Downloads can be cancelled and installation never begins merely from a release check.
 
-The updater reads `hyjys/SCENE-App` Releases and accepts `sceneapp-{version}-windows-x64.exe` and `sceneapp-{version}-windows-x64-setup.exe`. Publish numeric tags such as `v0.4` and upload the matching Inno installer manually. The official release location, declared size and available SHA-256 are checked.
+The updater reads `hyjys/SCENE-App` Releases and accepts `sceneapp-{version}-windows-x64.exe` and `sceneapp-{version}-windows-x64-setup.exe`. Publish numeric tags such as `v0.5` and upload the matching Inno installer manually. The official release location, declared size and available SHA-256 are checked.
 
 `installer/sceneapp.iss` is based on the supplied v0.3 script and preserves AppId `{09594B09-BD34-4B71-90C2-2E8A1349D7B2}`, lzma2/ultra64 maximum compression, solid compression and separate LZMA process/thread settings.
 
 ## Build and sources
 
-Use Windows x64, Python 3.15 and pinned `requirements-build.txt`/`requirements-lock.txt`. See the main README for setup. `build.ps1` builds the EXE, portable ZIP and `dist/SCENE-App-v0.4-source.zip`. `build.ps1 -BuildInstaller` also compiles `dist/sceneapp-0.4-windows-x64-setup.exe` using Inno Setup 7 or newer; `-InnoCompiler` supplies an explicit compiler path. `-IncludeDependencySources` adds the pinned PyPI source archive. Artifacts have SHA-256 files.
+Use Windows x64, Python 3.15 and pinned `requirements-build.txt`/`requirements-lock.txt`. See the main README for setup. `build.ps1` builds the EXE, portable ZIP and `dist/SCENE-App-v0.5-source.zip`. `build.ps1 -BuildInstaller` also compiles `dist/sceneapp-0.5-windows-x64-setup.exe` using Inno Setup 7 or newer; `-InnoCompiler` supplies an explicit compiler path. `-IncludeDependencySources` adds the pinned PyPI source archive. Artifacts have SHA-256 files.
 
 Run `python -m unittest discover -s tests -v` and `python tools/verify_releases.py` in the build environment. Publish corresponding project, dependency and native-component sources beside the release.
 
