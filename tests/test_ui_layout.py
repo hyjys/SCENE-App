@@ -51,13 +51,12 @@ class BilingualLayoutTests(unittest.TestCase):
         self.assertLessEqual(top + widget.winfo_height(), app.winfo_height())
 
     def assert_blackscreen_controls_visible(self, app):
-        for widget in (app.blackscreen_panel, app.blackscreen_on_button,
-                       app.blackscreen_off_button, app.blackscreen_status_label,
-                       app.blackscreen_hint):
+        stage = app.stage
+        for widget in (stage.blackscreen_panel, stage.blackscreen_on_button,
+                       stage.blackscreen_off_button, stage.blackscreen_status_label):
             self.assert_visible_in_root(app, widget)
-        self.assertLessEqual(
-            app.blackscreen_panel.winfo_rooty() + app.blackscreen_panel.winfo_height(),
-            app.canvas.winfo_rooty())
+        self.assertGreaterEqual(stage.blackscreen_panel.winfo_rootx() - app.winfo_rootx(), app.winfo_width() // 2)
+        self.assertGreater(stage.blackscreen_panel.winfo_rooty() - app.winfo_rooty(), app.winfo_height() * .60)
 
     def test_english_scene_validation_modes_and_completion(self):
         set_language("en")
@@ -82,16 +81,18 @@ class BilingualLayoutTests(unittest.TestCase):
                 try:
                     app.update()
                     self.assert_window_fits_work_area(app)
-                    self.assert_blackscreen_controls_visible(app)
+                    self.assertIsNone(app.stage)
+                    self.assertFalse(hasattr(app, "blackscreen_panel"))
                     app.geometry("600x540")
                     app.update()
                     self.assert_window_fits_work_area(app)
-                    self.assert_blackscreen_controls_visible(app)
+                    self.assertIsNone(app.stage)
+                    self.assertFalse(hasattr(app, "blackscreen_on_button"))
                     self.assertGreater(app.canvas.winfo_height(), 100)
                 finally:
                     close_app(app)
 
-    def test_blackscreen_panel_stays_visible_while_audio_form_scrolls(self):
+    def test_preparation_header_stays_visible_while_form_scrolls_without_projector(self):
         for language in ("ko", "en"):
             with self.subTest(language=language):
                 set_language(language)
@@ -103,37 +104,38 @@ class BilingualLayoutTests(unittest.TestCase):
                     app.update()
                     app.canvas.yview_moveto(0)
                     app.update()
-                    panel_position = (app.blackscreen_panel.winfo_rootx(),
-                                      app.blackscreen_panel.winfo_rooty())
+                    header_position = (app.mode_selector.winfo_rootx(), app.mode_selector.winfo_rooty())
                     self.assertEqual(app.canvas.yview()[0], 0)
-                    self.assert_blackscreen_controls_visible(app)
+                    self.assert_visible_in_root(app, app.mode_selector)
                     app.canvas.yview_moveto(1)
                     app.update()
                     self.assertEqual(app.canvas.yview()[1], 1)
                     self.assertGreater(app.canvas.yview()[0], 0)
-                    self.assert_blackscreen_controls_visible(app)
-                    self.assertEqual(panel_position, (app.blackscreen_panel.winfo_rootx(),
-                                                      app.blackscreen_panel.winfo_rooty()))
+                    self.assert_visible_in_root(app, app.mode_selector)
+                    self.assertEqual(header_position, (app.mode_selector.winfo_rootx(), app.mode_selector.winfo_rooty()))
+                    self.assertIsNone(app.stage)
+                    self.assertFalse(hasattr(app, "blackscreen_panel"))
                     self.assert_visible_in_root(app, app.log_frame)
                 finally:
                     close_app(app)
 
-    def test_blackscreen_text_and_buttons_fit_narrow_window_in_both_languages(self):
+    def test_stage_projector_text_and_buttons_fit_lower_right_in_both_languages(self):
         for language in ("ko", "en"):
             with self.subTest(language=language):
                 set_language(language)
                 app = SceneApp(show_dialogs=False)
                 try:
-                    app.geometry("600x540")
+                    app._select_app_mode("무대 모드")
+                    self.assertEqual(app.app_mode, "무대 모드")
                     app._handle_blackscreen_state("error", "no_secondary_monitor")
                     app.update()
                     self.assert_blackscreen_controls_visible(app)
-                    for widget in (app.blackscreen_hint, app.blackscreen_status_label):
+                    for widget in (app.stage.blackscreen_status_label,):
                         text = widget._label
                         self.assertEqual(widget.cget("font").actual("family"), "NanumGothic")
                         self.assertLessEqual(text.winfo_reqwidth(), widget.winfo_width())
                         self.assertLessEqual(text.winfo_reqheight(), widget.winfo_height())
-                    for widget in (app.blackscreen_on_button, app.blackscreen_off_button):
+                    for widget in (app.stage.blackscreen_on_button, app.stage.blackscreen_off_button):
                         text = widget._text_label
                         self.assertLessEqual(text.winfo_reqwidth(), widget.winfo_width())
                         self.assertLessEqual(text.winfo_reqheight(), widget.winfo_height())

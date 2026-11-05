@@ -42,6 +42,19 @@ class SceneGuiTests(unittest.TestCase):
             time.sleep(0.01)
         self.assertFalse(self.app._busy)
 
+    def open_stage(self):
+        self.app._select_app_mode("무대 모드")
+        self.assertEqual(self.app.app_mode, "무대 모드")
+        self.assertIsNotNone(self.app.stage)
+        return self.app.stage
+
+    def test_preparation_has_no_blackscreen_or_projector_panel(self):
+        self.assertEqual(self.app.app_mode, "준비 모드")
+        self.assertIsNone(self.app.stage)
+        self.assertFalse(hasattr(self.app, "blackscreen_panel"))
+        self.assertFalse(hasattr(self.app, "blackscreen_on_button"))
+        self.assertFalse(hasattr(self.app, "blackscreen_off_button"))
+
     def test_customtkinter_and_bundled_korean_font(self):
         self.assertIsInstance(self.app, scene.ctk.CTk)
         self.assertEqual(scene.font_report(self.app)["family"], "NanumGothic")
@@ -63,35 +76,33 @@ class SceneGuiTests(unittest.TestCase):
         self.app.number_var.set("007.50")
         self.assertEqual(self.app.filename_var.get(), "bgm007.50_오프닝.mp3")
 
-    def test_blackscreen_on_off_operates_independently_of_audio_job(self):
+    def test_stage_blackscreen_controls_follow_native_state(self):
+        stage = self.open_stage()
         controller = Mock(running=False)
         controller.start.side_effect = lambda: setattr(controller, "running", True)
         self.app._blackscreen = controller
-        self.app._busy = True
-        self.app._update_controls()
-        self.assertEqual(self.app.blackscreen_on_button.cget("state"), "normal")
-        self.app.blackscreen_on_button.invoke()
+        self.assertEqual(stage.blackscreen_on_button.cget("state"), "normal")
+        stage.blackscreen_on_button.invoke()
         controller.start.assert_called_once()
         self.app._turn_blackscreen_on()
         controller.start.assert_called_once()
         self.app._events.put(("blackscreen", ("on", r"\\.\DISPLAY2")))
         self.app._poll_events()
         self.assertIn("ON", self.app.blackscreen_status_var.get())
-        self.assertEqual(self.app.blackscreen_off_button.cget("state"), "normal")
-        self.assertEqual(self.app.action_button.cget("state"), "disabled")
-        self.app.blackscreen_off_button.invoke()
+        self.assertEqual(stage.blackscreen_off_button.cget("state"), "normal")
+        stage.blackscreen_off_button.invoke()
         controller.stop.assert_called_once()
         self.app._events.put(("blackscreen", ("on", r"\\.\DISPLAY2")))
         self.app._poll_events()
         self.assertEqual(self.app._blackscreen_state, "stopping")
-        self.assertEqual(self.app.blackscreen_off_button.cget("state"), "disabled")
+        self.assertEqual(stage.blackscreen_off_button.cget("state"), "disabled")
         self.app._events.put(("blackscreen", ("off", "")))
         self.app._poll_events()
         self.assertIn("OFF", self.app.blackscreen_status_var.get())
-        self.assertEqual(self.app.blackscreen_on_button.cget("state"), "normal")
-        self.app._busy = False
+        self.assertEqual(stage.blackscreen_on_button.cget("state"), "normal")
 
     def test_blackscreen_reconnect_and_alt_f4_off_leave_app_open(self):
+        stage = self.open_stage()
         audio_status = self.app.status_var.get()
         for state in ("on", "waiting", "on", "off"):
             self.app._events.put(("blackscreen", (state, r"\\.\DISPLAY2" if state == "on" else "")))
@@ -99,26 +110,28 @@ class SceneGuiTests(unittest.TestCase):
         self.assertTrue(self.app.winfo_exists())
         self.assertFalse(self.app._closing)
         self.assertEqual(self.app.status_var.get(), audio_status)
-        self.assertEqual(self.app.blackscreen_off_button.cget("state"), "disabled")
+        self.assertEqual(stage.blackscreen_off_button.cget("state"), "disabled")
 
     def test_blackscreen_startup_error_is_inline_and_allows_retry(self):
+        stage = self.open_stage()
         self.app._events.put(("blackscreen", ("error", "no_secondary_monitor")))
         self.app._poll_events()
         self.assertIn("확장", self.app.blackscreen_status_var.get())
-        self.assertEqual(self.app.blackscreen_on_button.cget("state"), "normal")
-        self.assertEqual(self.app.blackscreen_off_button.cget("state"), "disabled")
+        self.assertEqual(stage.blackscreen_on_button.cget("state"), "normal")
+        self.assertEqual(stage.blackscreen_off_button.cget("state"), "disabled")
         self.assertIsNone(self.app.last_error)
         self.assertIn("보조 모니터", self.app.log_text.get("1.0", "end"))
 
     def test_blackscreen_button_enter_does_not_start_audio(self):
+        stage = self.open_stage()
         self.app.deiconify()
         self.app.update()
-        self.app.blackscreen_on_button._canvas.focus_force()
+        stage.blackscreen_on_button._canvas.focus_force()
         self.app.update()
         with patch.object(self.app, "_turn_blackscreen_on") as turn_on, patch.object(self.app, "_begin") as begin:
             # CTk retains the original command, so replace it for this key event.
-            self.app.blackscreen_on_button.configure(command=turn_on)
-            self.app.blackscreen_on_button._canvas.event_generate("<Return>")
+            stage.blackscreen_on_button.configure(command=turn_on)
+            stage.blackscreen_on_button._canvas.event_generate("<Return>")
             self.app.update()
         turn_on.assert_called_once()
         begin.assert_not_called()

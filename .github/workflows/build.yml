@@ -1,4 +1,4 @@
-name: Build portable SCENE App
+name: Build SCENE App installer and portable release
 on: workflow_dispatch
 jobs:
   build:
@@ -8,9 +8,21 @@ jobs:
       - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.15'
+      - name: Prepare Inno Setup 7
+        shell: powershell
+        run: |
+          $taskCompiler = 'C:\Program Files\Inno Setup 7\ISCC.exe'
+          if (-not (Test-Path -LiteralPath $taskCompiler)) {
+            $taskInnoInstaller = Join-Path $env:RUNNER_TEMP 'innosetup-7.1.1-x64.exe'
+            Invoke-WebRequest -Uri 'https://github.com/jrsoftware/issrc/releases/download/is-7_1_1/innosetup-7.1.1-x64.exe' -OutFile $taskInnoInstaller
+            $taskSignature = Get-AuthenticodeSignature -LiteralPath $taskInnoInstaller
+            if ($taskSignature.Status -ne 'Valid' -or $taskSignature.SignerCertificate.Subject -notmatch 'Pyrsys B\.V\.') { throw 'Inno Setup publisher verification failed.' }
+            $taskInnoInstall = Start-Process -FilePath $taskInnoInstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-') -Wait -PassThru -WindowStyle Hidden
+            if ($taskInnoInstall.ExitCode -ne 0) { throw 'Inno Setup 7 installation failed.' }
+          }
       - name: Build SCENE App
         shell: powershell
-        run: ./build.ps1
+        run: ./build.ps1 -BuildInstaller -IncludeDependencySources
       - name: Verify frozen SCENE App
         shell: powershell
         run: ./.venv/Scripts/python.exe tools/verify_releases.py
@@ -19,5 +31,6 @@ jobs:
           name: scene-app-windows-x64
           path: |
             dist/*.zip
+            dist/sceneapp-*-windows-x64*.exe
             dist/*.sha256
             build/release-verification.json

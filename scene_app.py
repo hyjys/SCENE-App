@@ -21,6 +21,9 @@ from ui_theme import VERSION, BACKGROUND, prepare_ui, configure_fonts, font, fon
 from backend import AppError, Cancelled, ProcessRunner, _validate_url, app_dir
 from scene_blackscreen import BlackScreenController
 from scene_backend import convert_scene_file, download_scene_audio, scene_output_name
+from scene_video import convert_scene_video, download_scene_video
+from scene_settings import DEFAULTS, load_settings, save_settings, validate_settings
+from scene_updates import check_for_update, download_update, launch_installer
 
 
 class SceneApp(ctk.CTk):
@@ -45,6 +48,14 @@ class SceneApp(ctk.CTk):
         self._progress_running = False
         self.last_output: Path | None = None
         self.last_error: str | None = None
+        self.settings = load_settings() if show_dialogs else dict(DEFAULTS)
+        self.stage = None
+        self._settings_dialog = None
+        self._update_release = None
+        self._update_path = None
+        self._update_busy = False
+        self._update_cancel = threading.Event()
+        self.app_mode = "준비 모드"
 
         self.number_var = tk.StringVar(self)
         self.title_var = tk.StringVar(self)
@@ -53,6 +64,8 @@ class SceneApp(ctk.CTk):
         self.filename_var = tk.StringVar(self, tr("bgm번호_제목.mp3"))
         self.status_var = tk.StringVar(self, tr("번호와 제목을 입력한 뒤 음원을 가져오세요."))
         self.show_log_var = tk.BooleanVar(self, False)
+        self.video_var = tk.BooleanVar(self, False)
+        self.update_status_var = tk.StringVar(self, "")
         self.blackscreen_status_var = tk.StringVar(self, tr("OFF · 보조 화면을 그대로 표시합니다."))
 
         self._configure_styles()
@@ -70,6 +83,8 @@ class SceneApp(ctk.CTk):
         self._handle_blackscreen_state("off", "")
         self.after(60, self._poll_events)
         self.after(120, self._check_dependencies)
+        if show_dialogs and self.settings["check_updates"]:
+            self.after(1800, self._check_updates)
         self.number_entry.focus_set()
 
     def _configure_styles(self) -> None:
@@ -77,28 +92,30 @@ class SceneApp(ctk.CTk):
 
     def _build_interface(self) -> None:
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
-        banner = ctk.CTkFrame(self, fg_color="#dbeafe", corner_radius=12)
+        self.rowconfigure(1, weight=1)
+        header = ctk.CTkFrame(self, fg_color="white", corner_radius=0)
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(0, weight=1)
+        self.mode_selector = ctk.CTkSegmentedButton(header, values=["준비 모드", "무대 모드"], font=font(14), command=self._select_app_mode)
+        self.mode_selector.set(self.app_mode)
+        self.mode_selector.grid(row=0, column=0, sticky="w", padx=14, pady=10)
+        label(header, textvariable=self.update_status_var, size=12, muted=True).grid(row=1, column=0, columnspan=3, sticky="w", padx=14)
+        self.update_button = button(header, text="업데이트 확인", command=self._update_action)
+        self.update_button.grid(row=0,column=1,padx=4,pady=10)
+        button(header, text="앱 설정", command=self._open_settings).grid(row=0,column=2,padx=(4,14),pady=10)
+        self.preparation_frame = ctk.CTkFrame(self, fg_color=BACKGROUND, corner_radius=0)
+        self.preparation_frame.grid(row=1, column=0, sticky="nsew")
+        self.preparation_frame.columnconfigure(0,weight=1)
+        self.preparation_frame.rowconfigure(2,weight=1)
+        banner = ctk.CTkFrame(self.preparation_frame, fg_color="#dbeafe", corner_radius=12)
         banner.grid(row=0, column=0, sticky="ew", padx=20, pady=(16, 10))
         banner.columnconfigure(0, weight=1)
         label(banner, text="SCENE App", size=30, bold=True).grid(row=0, column=0, sticky="w", padx=18, pady=(12, 0))
         label(banner, text=f"v{VERSION}", muted=True).grid(row=0, column=1, padx=18, pady=(12, 0))
-        label(banner, text=tr("음원 준비부터 무대 암전까지"), muted=True).grid(row=1, column=0, columnspan=2, sticky="w", padx=18, pady=(0, 12))
+        label(banner, text="음원·영상 다운로드와 공연 큐 파일 준비", muted=True).grid(row=1, column=0, columnspan=2, sticky="w", padx=18, pady=(0, 12))
 
-        self.blackscreen_panel = ctk.CTkFrame(self, fg_color="white", corner_radius=12)
-        self.blackscreen_panel.grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 2))
-        self.blackscreen_panel.columnconfigure(0, weight=1)
-        label(self.blackscreen_panel, text=tr("블랙스크린"), size=16, bold=True).grid(row=0, column=0, sticky="w", padx=16, pady=(12, 4))
-        self.blackscreen_on_button = button(self.blackscreen_panel, text=tr("블랙스크린 ON"), accent=True, command=self._turn_blackscreen_on)
-        self.blackscreen_on_button.grid(row=0, column=1, padx=(0, 8), pady=(12, 4))
-        self.blackscreen_off_button = button(self.blackscreen_panel, text=tr("블랙스크린 OFF"), command=self._turn_blackscreen_off)
-        self.blackscreen_off_button.grid(row=0, column=2, padx=(0, 16), pady=(12, 4))
-        self.blackscreen_status_label = label(self.blackscreen_panel, textvariable=self.blackscreen_status_var, wraplength=650)
-        self.blackscreen_status_label.grid(row=1, column=0, columnspan=3, sticky="ew", padx=16)
-        self.blackscreen_hint = label(self.blackscreen_panel, text=tr("Windows 화면을 '확장'으로 설정하세요. 검은 화면 위 Alt+F4로도 OFF할 수 있습니다."), muted=True, size=12, wraplength=650)
-        self.blackscreen_hint.grid(row=2, column=0, columnspan=3, sticky="ew", padx=16, pady=(2, 12))
         # CustomTkinter handles form scrolling and high-DPI mouse wheel input.
-        outer = ctk.CTkScrollableFrame(self, width=712, height=660, fg_color=BACKGROUND, corner_radius=0)
+        outer = ctk.CTkScrollableFrame(self.preparation_frame, width=712, height=660, fg_color=BACKGROUND, corner_radius=0)
         outer.grid(row=2, column=0, sticky="nsew", padx=14, pady=(10, 12))
         outer.columnconfigure(0, weight=1)
         self.canvas = outer._parent_canvas
@@ -142,6 +159,8 @@ class SceneApp(ctk.CTk):
         self.browse_button.grid(row=1, column=1, padx=(8, 0))
         self.file_hint = label(file_tab, text=tr("WAV, M4A, FLAC 등 음원과 영상의 오디오를 MP3로 변환합니다."), muted=True, wraplength=620)
         self.file_hint.grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 4))
+        self.video_toggle = CheckBox(naming, text="영상으로 저장 (H.264 + MP3 · 기본 OFF)", variable=self.video_var, font=font(), command=self._on_video_changed)
+        self.video_toggle.grid(row=5,column=0,columnspan=2,sticky="w",pady=(10,0))
 
         actions = ctk.CTkFrame(outer, fg_color="transparent")
         actions.grid(row=4, column=0, sticky="ew", pady=(16, 0))
@@ -175,12 +194,130 @@ class SceneApp(ctk.CTk):
     def _fit_window(self) -> None:
         fit_window(self, width=800, height=880, min_width=600, min_height=540)
 
+    def _stage_error(self, text):
+        self._append_log(str(text))
+        if self.stage is not None:
+            self.stage.projector_status.set(str(text))
+        if self._show_dialogs:
+            messagebox.showerror("SCENE · 무대 제어", str(text), parent=self)
+
+    def _select_app_mode(self, value):
+        if value == self.app_mode:
+            return
+        if self._busy or self._update_busy:
+            self.mode_selector.set(self.app_mode)
+            self.status_var.set("진행 중인 준비 작업을 완료하거나 취소한 뒤 전환하세요.")
+            return
+        if value == "무대 모드":
+            try:
+                if self.stage is None:
+                    from scene_stage import StageWorkspace
+                    self.stage = StageWorkspace(self, self.settings, on_error=self._stage_error,
+                        blackscreen_on=self._turn_blackscreen_on, blackscreen_off=self._turn_blackscreen_off)
+                    self._handle_blackscreen_state(self._blackscreen_state, "")
+                self.preparation_frame.grid_remove()
+                self.stage.grid(row=1,column=0,sticky="nsew")
+                self.minsize(1000, 620)
+                self.state("zoomed")
+            except Exception as exc:
+                self.preparation_frame.grid()
+                self.mode_selector.set(self.app_mode)
+                self._stage_error(str(exc))
+                return
+        else:
+            if self.stage is not None:
+                # Mode changes deliberately stop sound and projector output.
+                self.stage.audio.stop_all()
+                self.stage.projector.stop()
+                self._turn_blackscreen_off()
+                self.stage.grid_remove()
+            self.preparation_frame.grid()
+            self.state("normal")
+            self._fit_window()
+        self.app_mode = value
+        self.mode_selector.set(value)
+
+    def _open_settings(self):
+        if self._settings_dialog is not None and self._settings_dialog.winfo_exists():
+            self._settings_dialog.lift()
+            return
+        from scene_stage import SettingsDialog
+        def save(values):
+            self.settings = save_settings(values) if self._show_dialogs else validate_settings(values)
+            if self.stage is not None:
+                self.stage.update_settings(self.settings)
+        self._settings_dialog = SettingsDialog(self, self.settings, save)
+
+    def _check_updates(self):
+        if self._update_busy or self._closing or self.app_mode != "준비 모드":
+            return
+        self._update_busy = True
+        self.update_status_var.set("새 버전 확인 중…")
+        def worker():
+            try:
+                self._events.put(("update_checked", check_for_update(VERSION)))
+            except Exception as exc:
+                self._events.put(("update_failed", str(exc)))
+        threading.Thread(target=worker,daemon=True,name="scene-update-check").start()
+
+    def _update_action(self):
+        if self._update_busy:
+            if self._update_release:
+                self._update_cancel.set()
+            return
+        if self.app_mode != "준비 모드" or self._busy:
+            self.update_status_var.set("업데이트 설치는 준비 모드에서 작업을 마친 뒤 진행하세요.")
+            return
+        if self._update_path is not None:
+            try:
+                # Stop transports before invoking Inno's CloseApplications.
+                if self.stage:
+                    self.stage.close()
+                    self.stage = None
+                self._blackscreen.close()
+                launch_installer(self._update_path)
+                self.destroy()
+            except Exception as exc:
+                self.update_status_var.set(str(exc))
+            return
+        if self._update_release is None:
+            self._check_updates()
+            return
+        release = self._update_release
+        self._update_busy = True
+        self._update_cancel.clear()
+        self.update_button.configure(text="다운로드 취소")
+        def worker():
+            try:
+                result = download_update(release,cancel=self._update_cancel,
+                    progress=lambda done,total:self._events.put(("update_progress",(done,total))))
+                self._events.put(("update_downloaded",result))
+            except Exception as exc:
+                self._events.put(("update_failed",str(exc)))
+        threading.Thread(target=worker,daemon=True,name="scene-update-download").start()
+
+    def _handle_update_event(self,event,payload):
+        if event=="update_progress":
+            done,total=payload
+            self.update_status_var.set(f"업데이트 다운로드 · {done/total*100:.0f}%" if total else f"업데이트 다운로드 · {done//1024} KB")
+            return
+        self._update_busy=False
+        if event=="update_checked":
+            self._update_release=payload
+            self.update_status_var.set(f"v{payload.version} 업데이트를 사용할 수 있습니다." if payload else f"v{VERSION} · 최신 버전입니다.")
+            self.update_button.configure(text="업데이트 다운로드" if payload else "업데이트 확인")
+        elif event=="update_downloaded":
+            self._update_path=Path(payload)
+            self.update_status_var.set("설치 파일 다운로드 완료 · 버튼을 누르면 앱을 종료하고 설치합니다.")
+            self.update_button.configure(text="앱 종료 후 설치")
+        else:
+            self.update_status_var.set("업데이트 확인 / 다운로드 실패 · " + str(payload))
+            self.update_button.configure(text="업데이트 다운로드" if self._update_release else "업데이트 확인")
+
     def _on_canvas_resize(self, event: tk.Event) -> None:
         available = max(220, event.width - 65)
         for label in (self.preview_label, self.status_label, self.link_hint, self.file_hint):
             label.configure(wraplength=available)
-        for widget in (self.blackscreen_status_label, self.blackscreen_hint):
-            widget.configure(wraplength=available)
 
     def _turn_blackscreen_on(self) -> None:
         if self._closing or self._blackscreen.running or self._blackscreen_state not in {"off", "error"}:
@@ -214,22 +351,38 @@ class SceneApp(ctk.CTk):
             messages[state] = self._blackscreen_error
             self._append_log(self._blackscreen_error)
         self.blackscreen_status_var.set(messages[state])
-        self.blackscreen_on_button.configure(state="normal" if state in {"off", "error"} and not self._closing else "disabled")
-        self.blackscreen_off_button.configure(state="normal" if state in {"starting", "on", "waiting"} and not self._closing else "disabled")
+        if self.stage is not None:
+            self.stage.blackscreen_on_button.configure(state="normal" if state in {"off", "error"} and not self._closing else "disabled")
+            self.stage.blackscreen_off_button.configure(state="normal" if state in {"starting", "on", "waiting"} and not self._closing else "disabled")
+            self.stage.blackscreen_status_var.set(self.blackscreen_status_var.get())
 
     def destroy(self) -> None:
+        self._update_cancel.set()
+        if self.stage is not None:
+            self.stage.close()
+            self.stage = None
         self._blackscreen.close()
         super().destroy()
 
     def _update_preview(self, *_args: object) -> None:
         try:
             self.filename_var.set(scene_output_name(self.number_var.get(), self.title_var.get()))
+            if self.video_var.get():
+                self.filename_var.set(str(Path(self.filename_var.get()).with_suffix(".mp4")))
         except AppError:
             self.filename_var.set(tr("bgm번호_제목.mp3 · 번호와 제목을 입력하세요"))
 
     def _on_mode_changed(self, _event: tk.Event | None = None) -> None:
         if self.notebook.get():
             self.action_button.configure(text=tr("다운로드 + MP3 저장") if self.notebook.get() == self.modes[0] else tr("MP3로 변환 + 저장"))
+            if self.video_var.get():
+                self.action_button.configure(text="다운로드 + MP4 저장" if self.notebook.get() == self.modes[0] else "MP4로 변환 + 저장")
+
+    def _on_video_changed(self):
+        self._update_preview()
+        self._on_mode_changed()
+        self.link_hint.configure(text="최고 해상도 영상을 H.264 + MP3 오디오의 MP4로 저장합니다." if self.video_var.get() else tr("오디오 전용 형식 중 가장 높은 비트레이트를 골라 MP3로 저장합니다."))
+        self.file_hint.configure(text="영상 원본을 보존하고 프로젝터용 MP4로 변환합니다." if self.video_var.get() else tr("WAV, M4A, FLAC 등 음원과 영상의 오디오를 MP3로 변환합니다."))
 
     def _switch_mode(self, _event: tk.Event | None = None) -> str:
         if not self._busy:
@@ -263,14 +416,14 @@ class SceneApp(ctk.CTk):
     def _browse_file(self) -> None:
         if self._busy:
             return
-        selected = filedialog.askopenfilename(parent=self, title=tr("MP3로 변환할 음원 선택"), filetypes=[(tr("음원 / 영상 파일"), "*.wav *.m4a *.aac *.flac *.ogg *.opus *.wma *.aiff *.aif *.mp3 *.mp4 *.mkv *.webm *.mov"), (tr("모든 파일"), "*.*")])
+        selected = filedialog.askopenfilename(parent=self, title="MP4로 변환할 영상 선택" if self.video_var.get() else tr("MP3로 변환할 음원 선택"), filetypes=[(tr("음원 / 영상 파일"), "*.wav *.m4a *.aac *.flac *.ogg *.opus *.wma *.aiff *.aif *.mp3 *.mp4 *.mkv *.webm *.mov"), (tr("모든 파일"), "*.*")])
         if selected:
             self.file_var.set(selected)
             if not self.title_var.get().strip():
                 self.title_var.set(Path(selected).stem)
 
     def _begin(self) -> None:
-        if self._busy or self._closing:
+        if self._busy or self._closing or self.app_mode != "준비 모드":
             return
         number, title = self.number_var.get().strip(), self.title_var.get().strip()
         try:
@@ -279,14 +432,14 @@ class SceneApp(ctk.CTk):
             if mode == 0:
                 url = _validate_url(self.url_var.get())
                 dependencies = ("ffmpeg.exe",)
-                operation = lambda runner: download_scene_audio(url, number, title, runner)
+                operation = (lambda runner: download_scene_video(url, number, title, runner, dict(self.settings))) if self.video_var.get() else (lambda runner: download_scene_audio(url, number, title, runner))
             else:
                 source = Path(self.file_var.get().strip()).expanduser()
                 if not self.file_var.get().strip() or not source.is_file():
                     raise AppError(tr("MP3로 변환할 음원 파일을 선택해 주세요."))
                 source = source.resolve()
                 dependencies = ("ffmpeg.exe",)
-                operation = lambda runner: convert_scene_file(source, number, title, runner)
+                operation = (lambda runner: convert_scene_video(source, number, title, runner, dict(self.settings))) if self.video_var.get() else (lambda runner: convert_scene_file(source, number, title, runner))
             for name in dependencies:
                 if not (app_dir() / name).is_file():
                     raise AppError(tr("{name} 파일을 앱과 같은 폴더에 넣어 주세요.\n{folder}", name=name, folder=app_dir()))
@@ -296,7 +449,12 @@ class SceneApp(ctk.CTk):
             return
         self.status_var.set(tr("최고 비트레이트 오디오를 찾고 있습니다…") if mode == 0 else tr("MP3 변환을 준비하고 있습니다…"))
         self._append_log(tr("\n── 링크 다운로드 + MP3 ──") if mode == 0 else tr("\n── 파일 MP3 변환 ──"))
-        self._append_log(tr("저장할 이름: ") + scene_output_name(number, title))
+        output_name = scene_output_name(number, title)
+        if self.video_var.get():
+            output_name = Path(output_name).with_suffix(".mp4").name
+            self.status_var.set("프로젝터용 영상 다운로드 / 변환을 준비하고 있습니다…")
+            self._append_log("영상 모드 · H.264 + libmp3lame VBR 2")
+        self._append_log(tr("저장할 이름: ") + output_name)
         self._start_job(operation)
 
     def _start_job(self, operation: Callable[[ProcessRunner], Path]) -> None:
@@ -329,6 +487,7 @@ class SceneApp(ctk.CTk):
         # CTkTabview retains the active page while its mode selector is disabled.
         self.notebook.configure(state="disabled" if self._busy else "normal")
         self.cancel_button.configure(state="normal" if self._busy and not self._cancel_requested else "disabled")
+        self.video_toggle.configure(state="disabled" if self._busy else "normal")
 
     def _request_cancel(self) -> None:
         if not self._busy or self._runner is None or self._cancel_requested:
@@ -344,6 +503,8 @@ class SceneApp(ctk.CTk):
                 event, payload = self._events.get_nowait()
                 if event == "blackscreen":
                     self._handle_blackscreen_state(*payload)
+                elif event.startswith("update_"):
+                    self._handle_update_event(event, payload)
                 elif event == "log":
                     self._append_log(str(payload))
                 elif event == "status" and not self._cancel_requested:
@@ -449,6 +610,23 @@ def _packaging_self_test(report_path: Path, *, operation: tuple[str, str, str, s
         report["ui"] = type(app).__name__
         report["customtkinter"] = ctk.__version__
         report["version"] = VERSION
+        from scene_stage import StageWorkspace
+        from scene_script import ScriptViewerFrame
+        import pymupdf
+        import pythonmonkey
+        report["stage_available"] = StageWorkspace is not None
+        report["script_available"] = ScriptViewerFrame is not None
+        report["pdf_available"] = bool(pymupdf.VersionBind)
+        from tkinterweb import HtmlFrame
+        web_probe = HtmlFrame(app, javascript_enabled=True, messages_enabled=False)
+        try:
+            web_probe.load_html('<p id="check">before</p><script>document.getElementById("check").textContent="JS works";</script>')
+            report["web_javascript"] = (pythonmonkey.eval("6 * 7") == 42 and
+                web_probe.document.getElementById("check").textContent == "JS works")
+            if not report["web_javascript"]:
+                raise RuntimeError("Bundled PythonMonkey DOM JavaScript failed.")
+        finally:
+            web_probe.destroy()
         report["blackscreen_available"] = isinstance(app._blackscreen, BlackScreenController)
         report["language"] = get_language()
         report["ui_text"] = {"status": app.status_var.get(), "action": app.action_button.cget("text"), "modes": app.modes}

@@ -11,7 +11,7 @@ import customtkinter as ctk
 from ui_translations import tr
 
 
-VERSION = "0.3"
+VERSION = "0.4"
 FONT_FAMILY = "NanumGothic"
 BACKGROUND = "#f3f6fa"
 TEXT = "#17253d"
@@ -103,7 +103,7 @@ def font_report(root) -> dict:
 
 def button(master, *, accent: bool = False, compact: bool = False, **kwargs) -> ctk.CTkButton:
     widget = ctk.CTkButton(
-        master, height=28 if compact else 36, width=84 if compact else 100,
+        master, height=kwargs.pop("height", 28 if compact else 36), width=kwargs.pop("width", 84 if compact else 100),
         font=font(12 if compact else 13, "bold" if accent else "normal"),
         fg_color=ACCENT if accent else "#e3eaf5",
         hover_color="#1d4ed8" if accent else "#d4deed",

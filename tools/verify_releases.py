@@ -7,12 +7,14 @@ from functools import partial
 import hashlib
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
+import marshal
 import os
 from pathlib import Path
 import re
 import subprocess
 import threading
 import traceback
+import types
 import uuid
 import xml.etree.ElementTree as ET
 import zipfile
@@ -33,6 +35,54 @@ def require(condition: bool, message: str) -> None:
 def sha256(path: Path) -> str:
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def _code_signature(value):
+    """Compare compiled behavior while ignoring source paths and line tables."""
+    if isinstance(value, types.CodeType):
+        fields = ("co_name", "co_qualname", "co_argcount", "co_posonlyargcount", "co_kwonlyargcount",
+                  "co_nlocals", "co_stacksize", "co_flags", "co_code", "co_names", "co_varnames",
+                  "co_freevars", "co_cellvars", "co_exceptiontable")
+        return tuple(getattr(value, name) for name in fields) + (tuple(_code_signature(item) for item in value.co_consts),)
+    if isinstance(value, tuple):
+        return tuple(_code_signature(item) for item in value)
+    return value
+
+
+def verify_embedded_sources(executable: Path) -> dict:
+    from PyInstaller.archive.readers import CArchiveReader
+    archive = CArchiveReader(str(executable))
+    pyz = archive.open_embedded_archive("PYZ.pyz")
+    paths = set(ROOT.glob("scene_*.py"))
+    paths.update(ROOT / name for name in ("backend.py", "ui_theme.py", "ui_translations.py", "i18n.py"))
+    checked = {}
+    for path in sorted(paths):
+        name = path.stem
+        embedded = marshal.loads(archive.extract(name)) if name == "scene_app" else pyz.extract(name)
+        expected = compile(path.read_bytes(), str(path), "exec", dont_inherit=True, optimize=0)
+        require(_code_signature(embedded) == _code_signature(expected), f"Stale frozen module: {path.name}")
+        checked[path.name] = {"source_sha256": sha256(path), "compiled_behavior_matches": True}
+    return checked
+
+
+def verify_source_archive() -> dict:
+    path = ROOT / "dist" / "SCENE-App-v0.4-source.zip"
+    expected_sha = path.with_suffix(".zip.sha256").read_text(encoding="ascii").split()[0]
+    require(sha256(path) == expected_sha, "Source archive SHA-256 mismatch")
+    with zipfile.ZipFile(path) as archive:
+        require(archive.testzip() is None, "Corrupt source archive")
+        prefix = "SCENE-App-v0.4/"
+        manifest = json.loads(archive.read(prefix + "SOURCE-MANIFEST.json"))
+        require(manifest.get("version") == "0.4", "Stale source archive version")
+        for name, expected in manifest["files"].items():
+            source = (ROOT / name).resolve()
+            require(source.is_relative_to(ROOT.resolve()), f"Unsafe source manifest path: {name}")
+            content = archive.read(prefix + name)
+            require(len(content) == expected["bytes"] and hashlib.sha256(content).hexdigest() == expected["sha256"],
+                    f"Source archive entry integrity mismatch: {name}")
+            require(source.is_file() and sha256(source) == expected["sha256"], f"Stale source archive entry: {name}")
+    return {"archive": str(path), "bytes": path.stat().st_size, "sha256": expected_sha,
+            "files_match_current_sources": len(manifest["files"])}
 
 
 def portable_environment() -> dict[str, str]:
@@ -80,10 +130,11 @@ def verify_archive(variant: str, work_dir: Path) -> tuple[Path, dict]:
     require(manifest["variant"] == variant and manifest["executable"] == executable,
             f"Incorrect variant manifest: {source}")
     required = {executable, "ffmpeg.exe", "LICENSE", "THIRD_PARTY_SOURCES.md", "licenses/DENO-LICENSE.txt",
+                "licenses/CTkPDFViewer-LICENSE.txt",
                 "assets/fonts/NanumGothic-Regular.ttf", "assets/fonts/NanumGothic-Bold.ttf", "assets/fonts/OFL.txt"}
     require(required.issubset(manifest["files"]), f"Incomplete file manifest: {source}")
     require(manifest.get("application") == "SCENE App", f"Wrong application: {source}")
-    require(manifest.get("version") == "0.3", f"Wrong release version: {source}")
+    require(manifest.get("version") == "0.4", f"Wrong release version: {source}")
     require(not any((app_root / name).exists() for name in ("gui-yt-dlp.exe", "sceneaudiodown.exe")),
             "Legacy applications must not be included in SCENE App")
     require(not (app_root / "yt-dlp.exe").exists(), "SCENE App must use the embedded Python module")
@@ -109,12 +160,16 @@ def frozen_check(executable: Path, arguments: list[str], report_path: Path,
     require(report.get("frozen") is True, f"Check did not run a frozen executable: {executable}")
     require(Path(report["app_dir"]).resolve() == executable.parent.resolve(),
             f"Frozen executable uses the wrong application directory: {report['app_dir']}")
-    require(report.get("version") == "0.3", "Frozen app has the wrong version")
+    require(report.get("version") == "0.4", "Frozen app has the wrong version")
     require(report.get("variant") == "SCENE App", "Frozen app has the wrong product identity")
     require(report.get("blackscreen_available") is True, "Integrated blackscreen controls are missing")
     require(report.get("fonts", {}).get("family") == "NanumGothic", "Bundled Korean font was not applied")
     require(report.get("customtkinter") == "6.0.0", "CustomTkinter was not bundled")
     if "--self-test" in arguments or "--self-test-language" in arguments:
+        require(report.get("stage_available") is True, "Stage audio controls were not bundled")
+        require(report.get("script_available") is True, "Local script viewer was not bundled")
+        require(report.get("pdf_available") is True, "PDF renderer was not bundled")
+        require(report.get("web_javascript") is True, "Embedded PythonMonkey JavaScript runtime did not run")
         require(report.get("python_api") == "YoutubeDL", "The embedded yt_dlp API was not exercised")
         require(report.get("yt_dlp") == "2026.10.26", "Unexpected yt_dlp version")
         require(report.get("ejs_scripts", 0) >= 2, "Bundled EJS challenge scripts are missing")
@@ -211,12 +266,15 @@ def main() -> None:
             app_root, archive = verify_archive(variant, work_dir)
             roots[variant] = app_root
             executable = app_root / VARIANTS[variant][2]
+            embedded_sources = verify_embedded_sources(executable)
             self_test = frozen_check(executable, ["--self-test"], work_dir / f"{variant}-self-test.json", environment)
             english_test = frozen_check(executable, ["--self-test-language", "en", "--self-test"], work_dir / f"{variant}-english.json", environment)
             require(english_test.get("language") == "en", "English diagnostic did not select English")
-            report["variants"][variant] = {"archive": archive, "self_test": self_test, "english_test": english_test}
+            report["variants"][variant] = {"archive": archive, "self_test": self_test, "english_test": english_test,
+                                           "embedded_sources": embedded_sources}
             print(f"Verified {variant}: ZIP manifest, CustomTkinter/NanumGothic/yt_dlp/Deno, restricted PATH", flush=True)
         report["scene_workflows"] = verify_scene_workflows(roots["scene"], work_dir, environment)
+        report["source_archive"] = verify_source_archive()
         report["ok"] = True
         print("Verified SCENE: highest-bitrate audio download via yt_dlp module and external conversion", flush=True)
     except Exception:

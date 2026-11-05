@@ -1,21 +1,24 @@
-"""Package SCENE App v0.3, FFmpeg, fonts and redistribution notices."""
+"""Package SCENE App v0.4, FFmpeg, fonts and redistribution notices."""
 
 from __future__ import annotations
 
 import hashlib
 import importlib.metadata
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import subprocess
 import sys
 import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.3"
+VERSION = "0.4"
 RUNTIME_PACKAGES = (
     "customtkinter", "darkdetect", "packaging", "yt-dlp", "yt-dlp-ejs", "brotli", "certifi",
     "charset-normalizer", "idna", "mutagen", "pycryptodomex", "requests", "urllib3", "websockets",
+    "python-docx", "PyMuPDF", "Pillow", "lxml", "typing_extensions", "tkinterweb", "tkinterweb-tkhtml",
+    "tkinterweb-tkhtml-extras", "pythonmonkey", "pminit", "aiohttp", "pyreadline3",
+    "aiohappyeyeballs", "aiosignal", "attrs", "frozenlist", "multidict", "propcache", "yarl",
     "pyinstaller",
 )
 VARIANTS = {
@@ -36,10 +39,13 @@ def third_party_notices() -> str:
     )
     return (
         "Bundled third-party tools\n\n"
-        "SCENE App v0.3: GPL-3.0-or-later; see LICENSE.\n"
-        "Source: https://github.com/hyjys/SCENE-App/tree/v0.3\n"
+        "SCENE App v0.4: GPL-3.0-or-later; see LICENSE.\n"
+        "Source: https://github.com/hyjys/SCENE-App/tree/v0.4\n"
         "CustomTkinter: MIT; yt-dlp Python module: Unlicense; yt-dlp-ejs: Unlicense (bundled JS: MIT/ISC).\n"
         "Nanum Gothic Regular/Bold: SIL Open Font License 1.1; see assets/fonts/OFL.txt.\n"
+        "python-docx and TkinterWeb: MIT; Pillow: HPND; lxml: BSD-3-Clause.\n"
+        "PyMuPDF / MuPDF: AGPL-3.0-or-later; see licenses/PyMuPDF and upstream sources.\n"
+        "PythonMonkey/pminit: MIT; bundled SpiderMonkey: MPL-2.0; JS dependency notices: licenses/pminit.\n"
         "FFmpeg: https://ffmpeg.org/\n"
         "FFmpeg Windows build: https://github.com/BtbN/FFmpeg-Builds\n"
         "Deno (embedded in the GUI executable): https://github.com/denoland/deno\n"
@@ -62,13 +68,22 @@ def package_variant(variant: str, notices: str) -> Path:
               (ROOT / "vendor" / "TK-LICENSE.txt", "licenses/TK-LICENSE.txt"),
               (ROOT / "vendor" / "EJS-THIRD-PARTY-LICENSES.txt", "licenses/yt-dlp-ejs/JS-DEPENDENCIES.txt"),
               (ROOT / "docs" / "README.en.md", "README.en.md"),
+              (ROOT / "docs" / "CTkPDFViewer-LICENSE.txt", "licenses/CTkPDFViewer-LICENSE.txt"),
               (ROOT / "docs" / "FFMPEG-SOURCES.md", "docs/FFMPEG-SOURCES.md")]
     files += [(path, path.relative_to(ROOT).as_posix()) for path in sorted((ROOT / "assets" / "fonts").glob("*")) if path.is_file()]
     for package in RUNTIME_PACKAGES:
         distribution = importlib.metadata.distribution(package)
         for path in distribution.files or ():
-            if ".dist-info" in str(path) and path.name.lower().startswith(("license", "copying", "notice")):
-                files.append((Path(distribution.locate_file(path)), f"licenses/{package}/{path.name}"))
+            if not path.name.lower().startswith(("license", "copying", "notice")):
+                continue
+            parts = PurePosixPath(str(path).replace("\\", "/")).parts
+            metadata_index = next((index for index, part in enumerate(parts) if part.endswith(".dist-info")), None)
+            relative = PurePosixPath(*parts[metadata_index + 1:]) if metadata_index is not None else PurePosixPath(*parts)
+            if relative.is_absolute() or ".." in relative.parts:
+                raise ValueError(f"Unsafe dependency license path: {path}")
+            source = Path(distribution.locate_file(path))
+            if source.is_file() and source.stat().st_size:
+                files.append((source, f"licenses/{package}/{relative.as_posix()}"))
     python_license = Path(sys.base_prefix) / "LICENSE.txt"
     if not python_license.is_file():
         raise FileNotFoundError(f"Python license missing: {python_license}")
@@ -85,7 +100,7 @@ def package_variant(variant: str, notices: str) -> Path:
         "application": "SCENE App",
         "version": VERSION,
         "license": "GPL-3.0-or-later",
-        "source": "https://github.com/hyjys/SCENE-App/tree/v0.3",
+        "source": "https://github.com/hyjys/SCENE-App/tree/v0.4",
         "python": sys.version.split()[0],
         "dependencies": {name: importlib.metadata.version(name) for name in RUNTIME_PACKAGES},
         "variant": variant,
@@ -96,7 +111,7 @@ def package_variant(variant: str, notices: str) -> Path:
     output_dir.mkdir(exist_ok=True)
     archive_path = output_dir / archive_name
     temporary_path = archive_path.with_suffix(".zip.part")
-    with zipfile.ZipFile(temporary_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+    with zipfile.ZipFile(temporary_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for source, name in files:
             archive.write(source, f"{folder}/{name}")
         archive.writestr(f"{folder}/THIRD-PARTY.txt", notices)
@@ -124,7 +139,7 @@ def package_source() -> Path:
     sources.update(ROOT.glob("requirements*.txt"))
     excluded_dirs = {".git", ".venv", "__pycache__", ".test-work", "build", "dist", "Downloads"}
     excluded_suffixes = {".exe", ".dll", ".pyd", ".pyc", ".log", ".part", ".spec"}
-    for directory in ("assets", "docs", "tests", "tools", ".github", "vendor"):
+    for directory in ("assets", "docs", "tests", "tools", "installer", ".github", "vendor"):
         for path in (ROOT / directory).rglob("*"):
             relative = path.relative_to(ROOT)
             if (path.is_file() and not path.is_symlink()
@@ -133,6 +148,8 @@ def package_source() -> Path:
                 sources.add(path)
     required = {
         "scene_app.py", "scene_blackscreen.py", "backend.py", "scene_backend.py",
+        "scene_audio.py", "scene_script.py", "scene_updates.py", "scene_settings.py",
+        "scene_stage.py", "scene_projector.py", "scene_video.py", "installer/sceneapp.iss",
         "ui_theme.py", "ui_translations.py", "i18n.py", "build.ps1", "version_info.txt",
         "requirements-lock.txt", "LICENSE", "tools/package_variants.py",
         "vendor/ffmpeg.json", "vendor/runtime.json",
@@ -153,7 +170,7 @@ def package_source() -> Path:
         "source": f"https://github.com/hyjys/SCENE-App/tree/v{VERSION}",
         "files": {},
     }
-    with zipfile.ZipFile(temporary_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+    with zipfile.ZipFile(temporary_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for path in sorted(sources):
             name = path.relative_to(ROOT).as_posix()
             archive.write(path, f"{folder}/{name}")
