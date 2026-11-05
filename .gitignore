@@ -1,0 +1,11 @@
+.venv/
+build/
+dist/
+Downloads/
+__pycache__/
+*.pyc
+*.spec
+.test-work/
+*.exe
+vendor/sources/
+*.log

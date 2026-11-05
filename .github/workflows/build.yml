@@ -1,0 +1,23 @@
+name: Build portable SCENE App
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.15'
+      - name: Build SCENE App
+        shell: powershell
+        run: ./build.ps1
+      - name: Verify frozen SCENE App
+        shell: powershell
+        run: ./.venv/Scripts/python.exe tools/verify_releases.py
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: scene-app-windows-x64
+          path: |
+            dist/*.zip
+            dist/*.sha256
+            build/release-verification.json
