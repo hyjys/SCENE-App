@@ -113,7 +113,7 @@ class StageWorkspaceTests(unittest.TestCase):
                 time.sleep(.01)
         self.assertIsNotNone(self.workspace.script.document)
         self.assertEqual(self.workspace.script.document.text, "배우: 안녕!\n음악 시작")
-        self.assertEqual(self.workspace.script.document.path.parent, self.folder / "Google 대본")
+        self.assertEqual(self.workspace.script.document.path.parent, (self.folder / "Google 대본").resolve())
         self.assertTrue(self.workspace.script.grid_info())
         self.assertFalse(self.workspace.web_script.grid_info())
         self.assertEqual(request.call_count, 1)
@@ -179,7 +179,7 @@ class AppModeIntegrationTests(unittest.TestCase):
         self.assertEqual(self.app.title_var.get(), "커튼콜")
         self.app._select_app_mode("무대 모드")
         self.assertIs(self.app.stage, workspace)
-        self.assertEqual(workspace.script.document.path, path)
+        self.assertEqual(workspace.script.document.path, path.resolve())
 
     def test_leaving_stage_with_empty_or_only_selected_audio_does_not_raise(self):
         self.app._select_app_mode("무대 모드")
