@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from os import SEEK_END
 from pathlib import Path
 import re
 import tempfile
+import wave
 
 import backend
 from i18n import tr
+
+
+def is_midi_source(source: str | Path) -> bool:
+    return Path(source).suffix.lower() in {".mid", ".midi"}
 
 
 def scene_output_name(number: str, title: str) -> str:
@@ -73,16 +79,92 @@ def download_scene_audio(url: str, number: str, title: str, runner: backend.Proc
                                   output_name=output_name)
 
 
-def convert_scene_file(source: Path, number: str, title: str, runner: backend.ProcessRunner) -> Path:
-    """Convert a local media file using the original Make MP3 codec settings."""
-    output_name = scene_output_name(number, title)
-    runner.check_cancelled()
+def _read_local_audio(source: Path) -> Path:
     try:
         source = Path(source).expanduser().resolve(strict=True)
         if not source.is_file() or not source.stat().st_size:
             raise backend.AppError(tr("변환할 음원 파일이 없거나 비어 있습니다. 파일을 다시 선택해 주세요."))
     except (OSError, RuntimeError) as exc:
         raise backend.AppError(tr("음원 파일을 읽을 수 없습니다.\n{path}\n{error}", path=source, error=exc)) from exc
+    return source
+
+
+def _validate_midi_chunks(source: Path) -> None:
+    # FluidSynth can return a short, silent WAV if the declared track is missing.
+    invalid = backend.AppError(tr("MIDI 파일이 손상되었거나 형식이 올바르지 않습니다.\n{path}", path=source))
+    with source.open("rb") as midi:
+        file_size = midi.seek(0, SEEK_END)
+        midi.seek(0)
+        header = midi.read(14)
+        header_size = int.from_bytes(header[4:8], "big")
+        tracks_remaining = int.from_bytes(header[10:12], "big")
+        if len(header) != 14 or header[:4] != b"MThd" or header_size < 6 or not tracks_remaining:
+            raise invalid
+        midi.seek(8 + header_size)
+        while tracks_remaining:
+            chunk = midi.read(8)
+            chunk_size = int.from_bytes(chunk[4:], "big")
+            end = midi.tell() + chunk_size
+            if len(chunk) != 8 or end > file_size:
+                raise invalid
+            if chunk[:4] == b"MTrk":
+                if chunk_size < 4:
+                    raise invalid
+                tracks_remaining -= 1
+            midi.seek(end)
+
+
+def _render_midi(source: Path, destination: Path, runner: backend.ProcessRunner) -> Path:
+    runner.check_cancelled()
+    _validate_midi_chunks(source)
+    runtime = backend.app_dir() / "vendor" / "fluidsynth"
+    synth = runtime / "fluidsynth.exe"
+    soundfont = runtime / "FluidR3_GM.sf3"
+    for path in (synth, soundfont):
+        if not path.is_file():
+            raise backend.AppError(tr("내장 MIDI 구성 요소를 찾을 수 없습니다.\n{path}", path=path))
+    if destination.exists() or destination.is_symlink():
+        raise backend.AppError(tr("MIDI 임시 파일이 이미 있습니다.\n{path}", path=destination))
+
+    runner.emit("status", tr("FluidR3 음색으로 MIDI 합성 중…"))
+    runner.emit("progress", None)
+    command = [str(synth), "-n", "-i", "-F", str(destination), "-T", "wav", "-O", "s16",
+               "-r", "44100", "-o", "synth.dynamic-sample-loading=1", str(soundfont), str(source)]
+    # FluidSynth automatically loads configuration from these Windows folders.
+    # Omit them only in this child so installed configs cannot replace FluidR3.
+    lines = runner.run(command, cwd=destination.parent, without_env=("USERPROFILE", "PROGRAMDATA"))
+    runner.check_cancelled()
+    # Some FluidSynth render failures are reported only on stderr, with exit 0.
+    errors = [line for line in lines if line.startswith(("fluidsynth: error:", "fluidsynth: panic:"))]
+    if errors:
+        raise backend.AppError(tr("FluidSynth로 MIDI를 합성할 수 없습니다.\n{error}", error="\n".join(errors[-16:])))
+    try:
+        with wave.open(str(destination), "rb") as rendered:
+            if (rendered.getnframes() and rendered.getnchannels() == 2
+                    and rendered.getsampwidth() == 2 and rendered.getframerate() == 44100):
+                return destination
+    except (OSError, EOFError, wave.Error):
+        pass
+    raise backend.AppError(tr("FluidSynth가 재생할 수 있는 WAV 파일을 만들지 못했습니다."))
+
+
+def render_midi_preview(source: Path, destination: Path, runner: backend.ProcessRunner) -> Path:
+    """Render MIDI to a fresh WAV in the preview player's temporary directory."""
+    runner.check_cancelled()
+    if not is_midi_source(source):
+        raise backend.AppError(tr("미리 들을 MIDI 파일(.mid, .midi)을 선택해 주세요."))
+    try:
+        return _render_midi(_read_local_audio(source), Path(destination).absolute(), runner)
+    except OSError as exc:
+        raise backend.AppError(tr("FluidSynth로 MIDI를 합성할 수 없습니다.\n{error}", error=exc)) from exc
+
+
+def convert_scene_file(source: Path, number: str, title: str, runner: backend.ProcessRunner) -> Path:
+    """Convert a local media file using the original Make MP3 codec settings."""
+    output_name = scene_output_name(number, title)
+    runner.check_cancelled()
+    midi = is_midi_source(source)
+    source = _read_local_audio(source)
     backend._executable("ffmpeg.exe")
     downloads = backend.app_dir() / "Downloads"
     try:
@@ -93,12 +175,13 @@ def convert_scene_file(source: Path, number: str, title: str, runner: backend.Pr
     runner.emit("log", tr("원본 음원: {path}", path=source))
     runner.emit("log", tr("작업 폴더: {directory}", directory=work_dir))
     try:
+        audio_input = _render_midi(source, work_dir / "rendered.wav", runner) if midi else source
         converted = work_dir / "converted.mp3"
         runner.emit("status", tr("외부 음원을 MP3로 변환 중…"))
         runner.emit("progress", None)
         runner.emit("log", tr("FFmpeg: MP3 (libmp3lame, VBR 2) · 원본 파일 보존"))
         runner.progress_duration = None
-        runner.run(backend._ffmpeg_command(None, source, converted, True, False, False), cwd=work_dir)
+        runner.run(backend._ffmpeg_command(None, audio_input, converted, True, False, False), cwd=work_dir)
         if not converted.is_file() or not converted.stat().st_size:
             raise backend.AppError(tr("FFmpeg가 MP3 결과 파일을 만들지 못했습니다."))
         runner.check_cancelled()

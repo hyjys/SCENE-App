@@ -1,12 +1,18 @@
-# SCENE App v0.5
+# SCENE App v0.6
 
 The November performance update brings preparation and stage operation into one Windows 10/11 x64 application for the December performance: audio transport, scripts, projector video and installer updates.
 
-Install `sceneapp-0.5-windows-x64-setup.exe`, or extract all of `scene-app.zip` to a writable folder and run `sceneapp.exe`. Keep `ffmpeg.exe` beside it. Python, Deno, fonts and viewer libraries are bundled. Web panels require **Microsoft Edge WebView2 Runtime**. If it is missing, follow the application's guidance to the [official Microsoft download page](https://developer.microsoft.com/microsoft-edge/webview2/#download-section).
+Run `sceneapp-{version}-windows-x64-setup.exe`, or extract all of `scene-app.zip` to a writable folder and run `sceneapp.exe`. Keep `ffmpeg.exe` and `vendor/fluidsynth/` beside the app. The distribution includes Python, Deno, FluidSynth, the compressed FluidR3 GM SoundFont, fonts and viewer libraries. Web panels require **Microsoft Edge WebView2 Runtime**. If it is missing, follow the application's guidance to the [official Microsoft download page](https://developer.microsoft.com/microsoft-edge/webview2/#download-section).
 
 ## Preparation mode
 
 Enter a cue number and title, then download a URL or convert a local file. MP3 is the default; enable the video toggle for MP4. Audio selects the highest-bitrate audio-only format and uses libmp3lame VBR 2. Video defaults to H.264 libx264, veryslow, CRF 20, with MP3 VBR 2. Global settings offer Intel Quick Sync and NVIDIA NVENC; compatible hardware and drivers are required.
+
+To audition a `.mid` or `.midi` file, choose it in **Convert a file to MP3** and click **Preview with FluidR3**. You can preview before entering a cue number or title. Click **Cancel preview** while it is preparing or **Stop preview** during playback. Changing the file, switching modes or starting conversion stops playback.
+
+Selecting MIDI turns off MP4 output. **Convert + save MP3** uses the bundled FluidSynth and `FluidR3_GM.sf3` to synthesize the same instruments you hear in the preview, then FFmpeg encodes the MP3. Both operations work offline. Use the saved MP3 in Stage mode.
+
+Standard MIDI Files in formats 0 and 1 with PPQN timing are supported. [FluidSynth MIDI file parser](https://github.com/FluidSynth/fluidsynth/blob/v2.6.2/src/midi/fluid_midi.c#L335-L354)
 
 `007.50` / `Opening` produces `bgm007.50_Opening.mp3` or `.mp4` in `Downloads` beside the app. Decimal numbers retain their spelling, with up to 12 digits excluding the decimal point. Duplicate names receive `(2)`, `(3)`, etc. Source files remain intact. Jobs provide progress, logs and cancellation. Network cancellation may wait for a request; site restrictions can prevent downloads. Local conversion works offline. Projector and blackout controls are provided in stage mode.
 
@@ -42,13 +48,13 @@ Global configuration is `%APPDATA%\SCENE App\settings.json`; imported Google scr
 
 Preparation mode can check GitHub's latest stable release on startup; disable this in settings if desired. The header offers check, download and an explicit close-and-install step. Update installation is blocked in stage mode. Downloads can be cancelled and installation never begins merely from a release check.
 
-The updater reads `hyjys/SCENE-App` Releases and accepts `sceneapp-{version}-windows-x64.exe` and `sceneapp-{version}-windows-x64-setup.exe`. Publish numeric tags such as `v0.5` and upload the matching Inno installer manually. The official release location, declared size and available SHA-256 are checked.
+The updater reads `hyjys/SCENE-App` Releases and accepts `sceneapp-{version}-windows-x64.exe` and `sceneapp-{version}-windows-x64-setup.exe`. Publish numeric tags such as `v0.6` and upload the matching Inno installer manually. The official release location, declared size and available SHA-256 are checked.
 
 `installer/sceneapp.iss` is based on the supplied v0.3 script and preserves AppId `{09594B09-BD34-4B71-90C2-2E8A1349D7B2}`, lzma2/ultra64 maximum compression, solid compression and separate LZMA process/thread settings.
 
 ## Build and sources
 
-Use Windows x64, Python 3.15 and pinned `requirements-build.txt`/`requirements-lock.txt`. See the main README for setup. `build.ps1` builds the EXE, portable ZIP and `dist/SCENE-App-v0.5-source.zip`. `build.ps1 -BuildInstaller` also compiles `dist/sceneapp-0.5-windows-x64-setup.exe` using Inno Setup 7 or newer; `-InnoCompiler` supplies an explicit compiler path. `-IncludeDependencySources` adds the pinned PyPI source archive. Artifacts have SHA-256 files.
+Use Windows x64, Python 3.15 and pinned `requirements-build.txt`/`requirements-lock.txt`. See the main README for setup. `build.ps1` builds the EXE, portable ZIP and `dist/SCENE-App-v0.6-source.zip`. `build.ps1 -BuildInstaller` also compiles `dist/sceneapp-0.6-windows-x64-setup.exe` using Inno Setup 7 or newer. Use `-InnoCompiler` to supply an explicit compiler path. `-IncludeDependencySources` adds `third-party-python-sources-v0.6.zip` and `third-party-midi-sources-v0.6.zip`. Artifacts have SHA-256 files.
 
 Run `python -m unittest discover -s tests -v` and `python tools/verify_releases.py` in the build environment. Publish corresponding project, dependency and native-component sources beside the release.
 

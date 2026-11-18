@@ -119,11 +119,14 @@ class ProcessRunner:
             except OSError:
                 pass
 
-    def run(self, command: list[str], cwd: Path | None = None) -> list[str]:
+    def run(self, command: list[str], cwd: Path | None = None, *,
+            without_env: tuple[str, ...] = ()) -> list[str]:
         self.check_cancelled()
         environment = os.environ.copy()
         environment["PYTHONIOENCODING"] = "utf-8"
         environment["PYTHONUTF8"] = "1"
+        for key in without_env:
+            environment.pop(key, None)
         try:
             with self._lock:
                 self.check_cancelled()

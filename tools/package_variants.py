@@ -1,4 +1,4 @@
-"""Package SCENE App v0.5, FFmpeg, fonts and redistribution notices."""
+"""Package SCENE App, media tools, fonts and redistribution notices."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.5"
+VERSION = "0.6"
 RUNTIME_PACKAGES = (
     "customtkinter", "darkdetect", "packaging", "yt-dlp", "yt-dlp-ejs", "brotli", "certifi",
     "charset-normalizer", "idna", "mutagen", "pycryptodomex", "requests", "urllib3", "websockets",
@@ -37,8 +37,8 @@ def third_party_notices() -> str:
     )
     return (
         "Bundled third-party tools\n\n"
-        "SCENE App v0.5: GPL-3.0-or-later; see LICENSE.\n"
-        "Source: https://github.com/hyjys/SCENE-App/tree/v0.5\n"
+        f"SCENE App v{VERSION}: GPL-3.0-or-later; see LICENSE.\n"
+        f"Source: https://github.com/hyjys/SCENE-App/tree/v{VERSION}\n"
         "CustomTkinter: MIT; yt-dlp Python module: Unlicense; yt-dlp-ejs: Unlicense (bundled JS: MIT/ISC).\n"
         "Nanum Gothic Regular/Bold: SIL Open Font License 1.1; see assets/fonts/OFL.txt.\n"
         "python-docx and tkwebview: MIT; Pillow: HPND; lxml: BSD-3-Clause.\n"
@@ -47,6 +47,9 @@ def third_party_notices() -> str:
         "Microsoft Edge WebView2 Evergreen Runtime is installed separately; see THIRD_PARTY_SOURCES.md.\n"
         "FFmpeg: https://ffmpeg.org/\n"
         "FFmpeg Windows build: https://github.com/BtbN/FFmpeg-Builds\n"
+        "FluidSynth: LGPL-2.1-or-later; see licenses/FLUIDSYNTH-LICENSE.txt.\n"
+        "Fluid (R3) GM SoundFont: copyright Frank Wen, MIT; see licenses/FLUIDR3-LICENSE.txt.\n"
+        "MIDI native dependencies: see licenses/MIDI-DEPENDENCY-LICENSES.txt.\n"
         "Deno (embedded in the GUI executable): https://github.com/denoland/deno\n"
         "Deno license: licenses/DENO-LICENSE.txt\n\n"
         "Exact dependency versions, source locations and build configuration: THIRD_PARTY_SOURCES.md\n"
@@ -63,6 +66,9 @@ def package_variant(variant: str, notices: str) -> Path:
               (ROOT / "vendor" / "DENO-LICENSE.txt", "licenses/DENO-LICENSE.txt"),
               (ROOT / "vendor" / "ffmpeg-LICENSE.txt", "licenses/FFMPEG-LICENSE.txt"),
               (ROOT / "vendor" / "ffmpeg-README.txt", "licenses/FFMPEG-BUILD-README.txt"),
+              (ROOT / "vendor" / "FLUIDSYNTH-LICENSE.txt", "licenses/FLUIDSYNTH-LICENSE.txt"),
+              (ROOT / "vendor" / "FLUIDR3-LICENSE.txt", "licenses/FLUIDR3-LICENSE.txt"),
+              (ROOT / "vendor" / "MIDI-DEPENDENCY-LICENSES.txt", "licenses/MIDI-DEPENDENCY-LICENSES.txt"),
               (ROOT / "vendor" / "TCL-LICENSE.txt", "licenses/TCL-LICENSE.txt"),
               (ROOT / "vendor" / "TK-LICENSE.txt", "licenses/TK-LICENSE.txt"),
               (ROOT / "vendor" / "EJS-THIRD-PARTY-LICENSES.txt", "licenses/yt-dlp-ejs/JS-DEPENDENCIES.txt"),
@@ -90,7 +96,15 @@ def package_variant(variant: str, notices: str) -> Path:
     files.append((python_license, "licenses/PYTHON-LICENSE.txt"))
     for path in sorted((Path(sys.base_prefix) / "tcl").glob("*/license*")):
         files.append((path, f"licenses/{path.parent.name}-{path.name}"))
-    files += [(ROOT / "vendor" / name, f"vendor/{name}") for name in ("runtime.json", "ffmpeg.json")]
+    files += [(ROOT / "vendor" / name, f"vendor/{name}")
+              for name in ("runtime.json", "ffmpeg.json", "fluidsynth.json", "midi-sources.json")]
+    midi_runtime = ROOT / "vendor" / "fluidsynth"
+    midi_manifest = json.loads((ROOT / "vendor" / "fluidsynth.json").read_text(encoding="utf-8"))
+    for name, entry in sorted(midi_manifest["files"].items()):
+        path = midi_runtime / name
+        if not path.is_file() or digest(path) != entry["sha256"]:
+            raise RuntimeError(f"MIDI runtime file missing or mismatched: {path}")
+        files.append((path, path.relative_to(ROOT).as_posix()))
     files += [(path, path.relative_to(ROOT).as_posix()) for path in sorted((ROOT / "vendor" / "sources").glob("*"))
               if path.name.startswith(("FFmpeg-Builds-", "ffmpeg-dependency-"))]
     for source, _ in files:
@@ -100,7 +114,7 @@ def package_variant(variant: str, notices: str) -> Path:
         "application": "SCENE App",
         "version": VERSION,
         "license": "GPL-3.0-or-later",
-        "source": "https://github.com/hyjys/SCENE-App/tree/v0.5",
+        "source": f"https://github.com/hyjys/SCENE-App/tree/v{VERSION}",
         "python": sys.version.split()[0],
         "dependencies": {name: importlib.metadata.version(name) for name in RUNTIME_PACKAGES},
         "variant": variant,
@@ -144,6 +158,7 @@ def package_source() -> Path:
             relative = path.relative_to(ROOT)
             if (path.is_file() and not path.is_symlink()
                     and not excluded_dirs.intersection(relative.parts)
+                    and relative.parts[:2] != ("vendor", "fluidsynth")
                     and path.suffix.lower() not in excluded_suffixes):
                 sources.add(path)
     required = {
@@ -152,7 +167,10 @@ def package_source() -> Path:
         "scene_stage.py", "scene_web.py", "scene_projector.py", "scene_video.py", "installer/sceneapp.iss",
         "ui_theme.py", "ui_translations.py", "i18n.py", "build.ps1", "version_info.txt",
         "requirements-lock.txt", "LICENSE", "tools/package_variants.py",
-        "vendor/ffmpeg.json", "vendor/runtime.json", "docs/WEBVIEW-LICENSE.txt",
+        "vendor/ffmpeg.json", "vendor/runtime.json", "vendor/fluidsynth.json", "tools/fetch_fluidsynth.py",
+        "vendor/FluidR3_GM.sf3", "vendor/midi-sources.json", "vendor/MIDI-DEPENDENCY-LICENSES.txt",
+        "vendor/FLUIDSYNTH-LICENSE.txt", "vendor/FLUIDR3-LICENSE.txt",
+        "docs/WEBVIEW-LICENSE.txt",
     }
     names = {path.relative_to(ROOT).as_posix() for path in sources}
     if missing := required - names:

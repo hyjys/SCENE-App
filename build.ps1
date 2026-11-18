@@ -30,6 +30,9 @@ try {
     & $venvPython (Join-Path $projectRoot 'tools\fetch_runtime.py')
     if ($LASTEXITCODE -ne 0) { throw '내장 JavaScript 런타임 준비에 실패했습니다.' }
 
+    & $venvPython (Join-Path $projectRoot 'tools\fetch_fluidsynth.py')
+    if ($LASTEXITCODE -ne 0) { throw 'FluidSynth와 FluidR3 사운드폰트 준비에 실패했습니다.' }
+
     & $venvPython -m PyInstaller --noconfirm --clean --onefile --windowed `
         --name sceneapp `
         --collect-all customtkinter `

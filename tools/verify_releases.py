@@ -21,6 +21,7 @@ import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
+VERSION = "0.6"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 VARIANTS = {
     "scene": ("scene-app.zip", "SCENE-App", "sceneapp.exe"),
@@ -82,14 +83,14 @@ def verify_embedded_sources(executable: Path) -> dict:
 
 
 def verify_source_archive() -> dict:
-    path = ROOT / "dist" / "SCENE-App-v0.5-source.zip"
+    path = ROOT / "dist" / f"SCENE-App-v{VERSION}-source.zip"
     expected_sha = path.with_suffix(".zip.sha256").read_text(encoding="ascii").split()[0]
     require(sha256(path) == expected_sha, "Source archive SHA-256 mismatch")
     with zipfile.ZipFile(path) as archive:
         require(archive.testzip() is None, "Corrupt source archive")
-        prefix = "SCENE-App-v0.5/"
+        prefix = f"SCENE-App-v{VERSION}/"
         manifest = json.loads(archive.read(prefix + "SOURCE-MANIFEST.json"))
-        require(manifest.get("version") == "0.5", "Stale source archive version")
+        require(manifest.get("version") == VERSION, "Stale source archive version")
         for name, expected in manifest["files"].items():
             source = (ROOT / name).resolve()
             require(source.is_relative_to(ROOT.resolve()), f"Unsafe source manifest path: {name}")
@@ -147,10 +148,11 @@ def verify_archive(variant: str, work_dir: Path) -> tuple[Path, dict]:
             f"Incorrect variant manifest: {source}")
     required = {executable, "ffmpeg.exe", "LICENSE", "THIRD_PARTY_SOURCES.md", "licenses/DENO-LICENSE.txt",
                 "licenses/CTkPDFViewer-LICENSE.txt", "licenses/WEBVIEW-LICENSE.txt",
+                "vendor/fluidsynth.json", "vendor/fluidsynth/fluidsynth.exe", "vendor/fluidsynth/FluidR3_GM.sf3",
                 "assets/fonts/NanumGothic-Regular.ttf", "assets/fonts/NanumGothic-Bold.ttf", "assets/fonts/OFL.txt"}
     require(required.issubset(manifest["files"]), f"Incomplete file manifest: {source}")
     require(manifest.get("application") == "SCENE App", f"Wrong application: {source}")
-    require(manifest.get("version") == "0.5", f"Wrong release version: {source}")
+    require(manifest.get("version") == VERSION, f"Wrong release version: {source}")
     dependencies = {name.lower().replace("_", "-"): version
                     for name, version in manifest.get("dependencies", {}).items()}
     require(dependencies.get("tkwebview") == "0.3.0", "tkwebview was not included in the release manifest")
@@ -162,6 +164,8 @@ def verify_archive(variant: str, work_dir: Path) -> tuple[Path, dict]:
     require(not any((app_root / name).exists() for name in ("gui-yt-dlp.exe", "sceneaudiodown.exe")),
             "Legacy applications must not be included in SCENE App")
     require(not (app_root / "yt-dlp.exe").exists(), "SCENE App must use the embedded Python module")
+    require(not any(name.lower().endswith(".sf2") for name in manifest["files"]),
+            "Only the compressed SF3 SoundFont may be included in the portable runtime")
     for name, expected in manifest["files"].items():
         path = (app_root / name).resolve()
         require(path.is_relative_to(app_root.resolve()), f"Unsafe manifest filename: {name}")
@@ -184,7 +188,7 @@ def frozen_check(executable: Path, arguments: list[str], report_path: Path,
     require(report.get("frozen") is True, f"Check did not run a frozen executable: {executable}")
     require(Path(report["app_dir"]).resolve() == executable.parent.resolve(),
             f"Frozen executable uses the wrong application directory: {report['app_dir']}")
-    require(report.get("version") == "0.5", "Frozen app has the wrong version")
+    require(report.get("version") == VERSION, "Frozen app has the wrong version")
     require(report.get("variant") == "SCENE App", "Frozen app has the wrong product identity")
     require(report.get("blackscreen_available") is True, "Integrated blackscreen controls are missing")
     require(report.get("fonts", {}).get("family") == "NanumGothic", "Bundled Korean font was not applied")
@@ -219,6 +223,29 @@ def verify_mp3(path: Path, app_root: Path, environment: dict[str, str]) -> dict:
 class QuietHandler(SimpleHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
+
+
+def verify_midi_workflow(app_root: Path, fixtures: Path, work_dir: Path, environment: dict[str, str]) -> dict:
+    midi = fixtures / "학교 방송 MIDI.midi"
+    # Format 0, one piano note, 96 ticks at 120 BPM.
+    header = bytes.fromhex("4d546864 00000006 0000 0001 0060")
+    track = bytes.fromhex("00 ff5103 07a120 00 c000 00 903c64 60 803c00 00 ff2f00")
+    midi.write_bytes(header + b"MTrk" + len(track).to_bytes(4, "big") + track)
+    original_sha = sha256(midi)
+    converted = frozen_check(app_root / "sceneapp.exe",
+                             ["--self-test-convert", str(midi), "008", "미디검증"],
+                             work_dir / "scene-midi.json", environment)
+    output = Path(converted["output"])
+    require(output == app_root / "Downloads" / "bgm008_미디검증.mp3",
+            f"Incorrect MIDI cue filename: {output}")
+    require(sha256(midi) == original_sha, "MIDI source file was modified")
+    media = verify_mp3(output, app_root, environment)
+    result = run([str(app_root / "ffmpeg.exe"), "-hide_banner", "-nostdin", "-i", str(output),
+                  "-af", "volumedetect", "-f", "null", "-"],
+                 cwd=app_root, environment=environment, timeout=20)
+    peak = re.search(r"max_volume:\s+(-?\d+(?:\.\d+)?) dB", result.stderr)
+    require(peak is not None and float(peak.group(1)) > -60, "FluidR3 rendered a silent MIDI preview tone")
+    return {"conversion": converted, "media": media, "peak_dbfs": float(peak.group(1)), "source_preserved": True}
 
 
 def verify_scene_workflows(app_root: Path, work_dir: Path, environment: dict[str, str]) -> dict:
@@ -269,12 +296,14 @@ def verify_scene_workflows(app_root: Path, work_dir: Path, environment: dict[str
             f"Incorrect converted cue filename: {converted_path}")
     require(sha256(wav) == original_wav_sha, "External source file was modified during conversion")
     require("FFmpeg: MP3 (libmp3lame, VBR 2)" in converted["log"], "External conversion did not report Make MP3 settings")
+    midi = verify_midi_workflow(app_root, fixtures, work_dir, environment)
     require(not list((app_root / "Downloads").glob(".gui-yt-dlp-*")), "Successful workflows left working directories behind")
     converted_media = verify_mp3(converted_path, app_root, environment)
     return {"fixture": {"representations": representations, "selected_id": expected_id,
                          "selected_kbps": expected_kbps},
             "download": download, "download_media": downloaded_media,
             "convert_without_yt_dlp": converted, "converted_media": converted_media,
+            "midi_conversion": midi,
             "external_source_preserved": True}
 
 
@@ -302,7 +331,7 @@ def main() -> None:
         report["scene_workflows"] = verify_scene_workflows(roots["scene"], work_dir, environment)
         report["source_archive"] = verify_source_archive()
         report["ok"] = True
-        print("Verified SCENE: highest-bitrate audio download via yt_dlp module and external conversion", flush=True)
+        print("Verified SCENE: highest-bitrate audio download and local audio/MIDI conversion", flush=True)
     except Exception:
         report["error"] = traceback.format_exc()
         print(report["error"], flush=True)

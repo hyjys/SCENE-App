@@ -1,5 +1,10 @@
 # 변경 기록
 
+## v0.6
+
+- 준비 모드에서 `.mid`, `.midi` 파일을 MP3로 변환하고 변환 전에 미리듣는 기능 추가.
+- FluidSynth와 SF3로 압축한 FluidR3 GM 사운드폰트를 설치형·포터블 배포에 포함. 미리듣기와 변환에서 같은 음색을 사용.
+
 ## v0.5 — 2026-11-05
 
 - 웹 패널을 tkwebview 0.3.0 / Microsoft Edge WebView2로 교체해 Chromium 기반 웹 페이지·JavaScript 처리 지원.

@@ -1,22 +1,22 @@
-# Third-party source and redistribution information — v0.5
+# Third-party source and redistribution information — v0.6
 
 The application code is GPL-3.0-or-later, copyright (C) 2026 hyjys.
 Project source, build scripts, font assets and tests:
-https://github.com/hyjys/SCENE-App/tree/v0.5
+https://github.com/hyjys/SCENE-App/tree/v0.6
 Release archives (binaries, project source and dependency source):
-https://github.com/hyjys/SCENE-App/releases/tag/v0.5
+https://github.com/hyjys/SCENE-App/releases/tag/v0.6
 
 External components retain their own copyright and license. Each portable ZIP
 includes LICENSE, licenses/, and the original Nanum Gothic OFL notice. The
 manifest records the exact component versions and distributed file hashes.
-`SCENE-App-v0.5-source.zip` includes the application sources, build scripts, tests,
+`SCENE-App-v0.6-source.zip` includes the application sources, build scripts, tests,
 font assets, dependency manifests, and matching FFmpeg source/build-recipe archives.
 The separately supplied Python source ZIP below contains the pinned PyPI sources.
 No third-party license is replaced by the application's GPL notice.
 
 ## Python packages
 
-`third-party-python-sources-v0.5.zip` on the same release contains the original
+`third-party-python-sources-v0.6.zip` on the same release contains the original
 source distributions for the versions below, with an upstream URL and verified
 SHA-256 for each file. `tools/package_dependency_sources.py` recreates this ZIP.
 Use each PyPI release page's "Download files" / source distribution for an
@@ -145,3 +145,44 @@ revisions, source code, build recipes (including external-library revisions),
 checksums and mirror instructions are documented in docs/FFMPEG-SOURCES.md.
 The build recipes are also provided with the source and binary release.
 See vendor/ffmpeg.json and tools/fetch_ffmpeg.py for reproducible download.
+
+## FluidSynth and Fluid (R3) GM SoundFont
+
+SCENE App invokes the official FluidSynth 2.6.2 Windows x64 command-line
+program as a subprocess. The portable and installed applications include
+`fluidsynth.exe`, `libfluidsynth-3.dll` and `sndfile.dll` in `vendor/fluidsynth/`.
+FluidSynth is LGPL-2.1-or-later. Its notice is in `licenses/FLUIDSYNTH-LICENSE.txt`.
+The original binary archive, source and payload SHA-256 values are pinned in
+`vendor/fluidsynth.json`. `tools/fetch_fluidsynth.py` prepares this directory.
+
+- [FluidSynth 2.6.2 release and sources](https://github.com/FluidSynth/fluidsynth/releases/tag/v2.6.2).
+- [FluidSynth Windows build recipe](https://github.com/FluidSynth/fluidsynth/blob/v2.6.2/.github/workflows/windows.yml),
+  which builds this archive with MSVC v143 and the C++11 OS abstraction and uses
+  the [libsndfile 1.2.2 Windows x64 release](https://github.com/libsndfile/libsndfile/releases/tag/1.2.2).
+  The FluidSynth sources use the GCE-Math and Signalsmith Basics submodules
+  pinned by the release tag. SDL3 support is disabled in the x64 build.
+
+The libsndfile binary contains ALAC code and statically linked Ogg, Vorbis,
+FLAC, Opus, LAME and mpg123 libraries. Their upstream notices, including the
+licenses for the FluidSynth submodules, are in `licenses/MIDI-DEPENDENCY-LICENSES.txt`.
+The [libsndfile Windows CI recipe](https://github.com/libsndfile/libsndfile/blob/1.2.2/.github/workflows/action.yml)
+configures the shared library with static dependencies. The vcpkg snapshot
+in the MIDI source archive contains build recipes and patches for the codec
+versions in the shipped DLL. Its revision is a matching August 2023 snapshot.
+The native sources and recipes can be used to rebuild the libraries. A
+byte-for-byte reproduction of the upstream DLL build has not been verified.
+
+The app uses one copy of the original stereo Fluid (R3) GM SoundFont from
+Frank Wen, copyright 2000–2002, 2008, under the MIT license. Its notice is in
+`licenses/FLUIDR3-LICENSE.txt`. The original GM SF2 in the
+[Debian upstream source archive](https://deb.debian.org/debian/pool/main/f/fluid-soundfont/fluid-soundfont_3.1.orig.tar.gz)
+matches the SHA-256 of the provided file. The bundled `FluidR3_GM.sf3` encodes
+the samples with Ogg Vorbis. The SF3 went from 148,398,306 to 26,965,698 bytes
+and retains the bank, program and preset names. The conversion settings and
+checksums are in `vendor/fluidsynth.json`.
+
+`build.ps1 -IncludeDependencySources` also creates
+`third-party-midi-sources-v0.6.zip`. Publish it with the binary ZIP and installer.
+It includes the unmodified upstream SoundFont and FluidSynth sources,
+dependency sources, vcpkg recipes and licenses. `vendor/midi-sources.json`
+records the archive URLs, lengths and SHA-256 values.

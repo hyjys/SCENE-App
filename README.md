@@ -1,17 +1,18 @@
-# SCENE App v0.5
+# SCENE App v0.6
 
-11월 공연 종료를 기념해 준비와 무대 운영을 한 앱에 담았습니다. 12월 공연부터 사용할 음향 제어반, 대본 뷰어, 프로젝터 제어와 설치형 업데이트를 추가했습니다. Windows 10/11 x64용입니다.
+공연 음원과 영상을 준비하고 무대를 운영하는 Windows 10/11 x64 앱입니다. v0.6에서는 학교 방송에서 쓰는 MIDI를 FluidR3 음색으로 미리듣고 MP3로 저장할 수 있습니다.
 
 [최신 릴리스](https://github.com/hyjys/SCENE-App/releases/latest) · [변경 기록](CHANGELOG.md) · [사용법](docs/SCENE-사용법.txt) · [English](docs/README.en.md)
 
 ## 설치와 실행
 
-릴리스의 `sceneapp-0.5-windows-x64-setup.exe`를 실행해 사용자 계정에 설치하거나, `scene-app.zip` 전체를 쓰기 가능한 폴더에 풀고 `sceneapp.exe`를 실행합니다. `ffmpeg.exe`는 실행 파일과 같은 폴더에 둡니다. 배포본에는 Python, Deno, 문서·웹 라이브러리와 나눔고딕이 포함됩니다. 웹 패널에는 **Microsoft Edge WebView2 Runtime**이 필요합니다. 설치되어 있지 않으면 앱의 안내에 따라 [Microsoft 공식 다운로드 페이지](https://developer.microsoft.com/microsoft-edge/webview2/#download-section)에서 설치하세요.
+릴리스의 `sceneapp-{version}-windows-x64-setup.exe`를 실행해 사용자 계정에 설치하거나, `scene-app.zip` 전체를 쓰기 가능한 폴더에 풀고 `sceneapp.exe`를 실행합니다. `ffmpeg.exe`와 `vendor/fluidsynth/`는 아래 위치에 둡니다. 배포본에는 Python, Deno, FluidSynth, 압축된 FluidR3 GM 사운드폰트와 문서·웹 라이브러리, 나눔고딕이 포함됩니다. 웹 패널에는 **Microsoft Edge WebView2 Runtime**이 필요합니다. 설치되어 있지 않으면 앱의 안내에 따라 [Microsoft 공식 다운로드 페이지](https://developer.microsoft.com/microsoft-edge/webview2/#download-section)에서 설치하세요.
 
 ```text
 SCENE-App/
   sceneapp.exe
   ffmpeg.exe
+  vendor/fluidsynth/            # FluidSynth, DLL, FluidR3_GM.sf3
   assets/fonts/
   licenses/
   docs/
@@ -35,6 +36,14 @@ SCENE-App/
 번호 `7.5`, 제목 `전환`은 `bgm7.5_전환.mp3` 또는 `bgm7.5_전환.mp4`로 저장합니다. 번호는 소수점 제외 최대 12자리이며 `007.50`처럼 입력한 표기를 유지합니다. 같은 이름이 있으면 `(2)` 등을 붙입니다. 외부 파일 변환도 원본을 보존합니다.
 
 MP3는 오디오 전용 형식 중 최고 비트레이트를 선택해 **libmp3lame VBR 2**로 변환합니다. 영상 기본은 **H.264 libx264 / veryslow / CRF 20 + MP3 VBR 2**의 MP4입니다. 앱 설정에서 인코더·속도 프리셋을 바꿀 수 있으며 **Intel Quick Sync(h264_qsv) / NVIDIA NVENC(h264_nvenc)**도 제공합니다. GPU 인코딩에는 지원 장치와 드라이버가 필요합니다.
+
+### MIDI 미리듣기와 변환
+
+**파일을 MP3로 변환** 탭에서 `.mid` 또는 `.midi`를 고르고 **FluidR3 미리듣기**를 누릅니다. 번호와 제목을 입력하기 전에도 들을 수 있습니다. 준비 중에는 **미리듣기 취소**, 재생 중에는 **미리듣기 정지**를 누릅니다. 파일을 바꾸거나 다른 모드로 전환하거나 변환을 시작하면 미리듣기가 멈춥니다.
+
+MIDI를 선택하면 영상 저장 옵션이 꺼집니다. **MP3로 변환 + 저장**을 누르면 내장 FluidSynth와 `FluidR3_GM.sf3`로 음원을 합성하고 FFmpeg로 MP3를 만듭니다. 미리듣기도 같은 FluidR3 음색을 사용하며 두 기능 모두 오프라인에서 동작합니다. 무대 모드에서는 저장한 MP3를 재생합니다.
+
+지원 형식은 박자 기반(PPQN) 표준 MIDI 형식 0과 1입니다. [FluidSynth MIDI 형식 처리](https://github.com/FluidSynth/fluidsynth/blob/v2.6.2/src/midi/fluid_midi.c#L335-L354)
 
 로그와 취소 버튼을 제공합니다. 네트워크 요청 중에는 취소 반영까지 잠시 걸릴 수 있습니다. 사이트 로그인·접근 제한에 따라 다운로드가 실패할 수 있으며 재생목록에서도 한 항목만 처리합니다. 파일 변환은 오프라인으로 가능합니다.
 
@@ -84,7 +93,7 @@ SCENE BlackScreen 1.0의 화면 덮기 동작을 통합했으며 Epson PJ·DDC/C
 
 준비 모드 시작 시 최신 정식 릴리스를 확인하며 앱 설정에서 자동 확인을 끌 수 있습니다. 상단 **업데이트 확인 → 업데이트 다운로드 → 앱 종료 후 설치** 순서로 진행합니다. 무대 모드에서는 업데이트를 설치하지 않습니다. 다운로드를 취소할 수 있으며 실제 설치는 버튼을 눌렀을 때 시작합니다.
 
-업데이터는 `hyjys/SCENE-App`의 최신 정식 GitHub Release에서 다음 이름을 인식합니다. 태그는 `v0.5`와 같은 숫자 버전을 사용합니다.
+업데이터는 `hyjys/SCENE-App`의 최신 정식 GitHub Release에서 다음 이름을 인식합니다. 태그는 `v0.6`과 같은 숫자 버전을 사용합니다.
 
 - `sceneapp-{version}-windows-x64.exe`
 - `sceneapp-{version}-windows-x64-setup.exe` — 이 저장소의 Inno 출력
@@ -102,6 +111,7 @@ py -3.15 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-build.txt -r requirements-lock.txt
 .\.venv\Scripts\python.exe tools\fetch_runtime.py
 .\.venv\Scripts\python.exe tools\fetch_ffmpeg.py
+.\.venv\Scripts\python.exe tools\fetch_fluidsynth.py
 .\.venv\Scripts\python.exe scene_app.py
 
 # EXE·배포 ZIP·프로젝트 소스 ZIP
@@ -116,7 +126,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -BuildInstaller 
 .\.venv\Scripts\python.exe tools\verify_releases.py
 ```
 
-출력은 `sceneapp.exe`, `dist/scene-app.zip`, `dist/SCENE-App-v0.5-source.zip`과 SHA-256 파일입니다. `-BuildInstaller`는 `dist/sceneapp-0.5-windows-x64-setup.exe`와 SHA-256을 추가합니다. `-IncludeDependencySources`는 고정된 PyPI 소스 묶음을 만듭니다. 릴리스에는 바이너리와 해당 프로젝트·의존성 및 네이티브 구성요소의 대응 소스를 함께 제공하세요.
+출력은 `sceneapp.exe`, `dist/scene-app.zip`, `dist/SCENE-App-v0.6-source.zip`과 SHA-256 파일입니다. `-BuildInstaller`는 `dist/sceneapp-0.6-windows-x64-setup.exe`와 SHA-256을 추가합니다. `-IncludeDependencySources`는 `third-party-python-sources-v0.6.zip`과 `third-party-midi-sources-v0.6.zip`을 만듭니다. 릴리스에는 바이너리와 해당 프로젝트·의존성 및 네이티브 구성요소의 대응 소스를 함께 제공하세요.
 
 ## 라이선스와 소스
 

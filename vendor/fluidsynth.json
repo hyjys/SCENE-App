@@ -1,0 +1,44 @@
+{
+  "name": "FluidSynth",
+  "version": "2.6.2",
+  "platform": "windows-x86_64",
+  "license": "LGPL-2.1-or-later",
+  "archive_url": "https://github.com/FluidSynth/fluidsynth/releases/download/v2.6.2/fluidsynth-v2.6.2-win10-x64-cpp11.zip",
+  "archive_bytes": 2729665,
+  "archive_sha256": "808295345d43c9c428f3fa87d29fbf97a9926f356df95559ff2689f3bd4072d7",
+  "source_url": "https://codeload.github.com/FluidSynth/fluidsynth/tar.gz/refs/tags/v2.6.2",
+  "source_sha256": "ca376b42a3c1b186a4c8c248931789a455ac94a89b777394969d678010c2f91f",
+  "files": {
+    "fluidsynth.exe": {
+      "archive_member": "fluidsynth-v2.6.2-win10-x64-cpp11/bin/fluidsynth.exe",
+      "sha256": "0da1d54ca018c5d2089d1d2fe1ad97c99f88128ac099f2675a8368e64af14253"
+    },
+    "libfluidsynth-3.dll": {
+      "archive_member": "fluidsynth-v2.6.2-win10-x64-cpp11/bin/libfluidsynth-3.dll",
+      "sha256": "3162c0881ab9646191c8327dfc413ea96670a3ac2e99299f28c2f0f257995f0e"
+    },
+    "sndfile.dll": {
+      "archive_member": "fluidsynth-v2.6.2-win10-x64-cpp11/bin/sndfile.dll",
+      "sha256": "4e3bd2de8e1485110eaebef8e1239471f73d608773831c323bf528e05645655e"
+    },
+    "FluidR3_GM.sf3": {
+      "bundled_source": "FluidR3_GM.sf3",
+      "sha256": "5e2792736b12bafb41ec56f982e6d4d4bfccc8f1b82e85c3c2a0b75eb3c42591"
+    }
+  },
+  "soundfont": {
+    "name": "Fluid (R3) General MIDI SoundFont (GM)",
+    "version": "3.1",
+    "license": "MIT",
+    "source_url": "https://deb.debian.org/debian/pool/main/f/fluid-soundfont/fluid-soundfont_3.1.orig.tar.gz",
+    "source_sha256": "2621acaa1c78e4abdb24bdd163230cc577e61276936d6aa6e3180582142f0343",
+    "source_member": "fluid-soundfont-3.1/FluidR3_GM.sf2",
+    "source_member_sha256": "74594e8f4250680adf590507a306655a299935343583256f3b722c48a1bc1cb0",
+    "converter": "Polyphone 2.7.1-beta",
+    "converter_url": "https://github.com/davy7125/polyphone/releases/tag/2.7.1-beta",
+    "converter_archive_url": "https://github.com/davy7125/polyphone/releases/download/2.7.1-beta/Polyphone_2.7.1-beta-windows_x64-portable.zip",
+    "converter_archive_sha256": "c8ebb7ded3b125b829b34571e230c7b7dab7cbf79233865597632ab33d34b189",
+    "conversion": "polyphone --convert sf3 FluidR3_GM.sf2 --quality medium -d . -o FluidR3_GM",
+    "conversion_note": "Polyphone generates time-dependent Ogg stream serial numbers. The build always uses the checked-in SF3 with the pinned SHA-256."
+  }
+}

@@ -4,5 +4,6 @@
 *.yml text eol=lf
 *.ps1 text eol=crlf
 *.ttf binary
+*.sf3 binary
 *.tar.gz binary
 assets/fonts/OFL.txt -text -whitespace

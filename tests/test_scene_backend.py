@@ -8,14 +8,18 @@ import os
 from pathlib import Path
 import re
 import shutil
+import struct
 import subprocess
+import tempfile
 import threading
 import unittest
 from unittest.mock import patch
 import uuid
+import wave
 
 import backend
 import scene_backend
+from scene_video import convert_scene_video
 import i18n
 
 
@@ -40,9 +44,9 @@ class RecordingRunner(backend.ProcessRunner):
         self.commands = []
         super().__init__(lambda kind, payload: self.events.append((kind, payload)))
 
-    def run(self, command, cwd=None):
+    def run(self, command, cwd=None, **kwargs):
         self.commands.append(command)
-        return super().run(command, cwd)
+        return super().run(command, cwd, **kwargs)
 
 
 def audio(format_id, abr=None, tbr=None, **raw):
@@ -154,6 +158,109 @@ class SceneSelectionTests(unittest.TestCase):
 class QuietHandler(SimpleHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
+
+
+class SceneMidiTests(unittest.TestCase):
+    MIDI_NOTE = bytes.fromhex(
+        "4d546864 00000006 0000 0001 01e0 "  # One track, 480 ticks per quarter note.
+        "4d54726b 00000010 00c000 00903c64 8360803c40 00ff2f00"
+    )
+
+    def setUp(self):
+        TEST_ROOT.mkdir(exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(prefix="scene-midi-", dir=TEST_ROOT)
+        self.addCleanup(temporary.cleanup)
+        self.workspace = Path(temporary.name)
+        self.runtime = self.workspace / "vendor" / "fluidsynth"
+        self.runtime.mkdir(parents=True)
+        self.source = self.workspace / "학교 방송 음악.MIDI"
+        self.source.write_bytes(self.MIDI_NOTE)
+        self.enterContext(patch.object(backend, "app_dir", return_value=self.workspace))
+
+    def _link_runtime(self):
+        runtime = ROOT / "vendor" / "fluidsynth"
+        if not (runtime / "fluidsynth.exe").is_file() or not (runtime / "FluidR3_GM.sf3").is_file():
+            self.skipTest("Bundled FluidSynth and FluidR3 are required")
+        for entry in runtime.iterdir():
+            if entry.is_file():
+                os.link(entry, self.runtime / entry.name)
+
+    def test_real_preview_and_mp3_conversion_use_the_bundled_soundfont(self):
+        self._link_runtime()
+        if not (ROOT / "ffmpeg.exe").is_file():
+            self.skipTest("Adjacent FFmpeg is required")
+        os.link(ROOT / "ffmpeg.exe", self.workspace / "ffmpeg.exe")
+        runner = RecordingRunner()
+        preview = scene_backend.render_midi_preview(self.source, self.workspace / "미리 듣기.wav", runner)
+        with wave.open(str(preview), "rb") as rendered:
+            self.assertEqual((rendered.getnchannels(), rendered.getsampwidth(), rendered.getframerate()), (2, 2, 44100))
+            peak = max(abs(sample) for (sample,) in struct.iter_unpack("<h", rendered.readframes(22050)))
+        self.assertGreater(peak, 100)
+        self.assertFalse((self.workspace / "Downloads").exists())
+
+        mp3 = scene_backend.convert_scene_file(self.source, "007.50", "학교 방송", runner)
+        self.assertEqual(mp3.name, "bgm007.50_학교 방송.mp3")
+        self.assertGreater(mp3.stat().st_size, 0)
+        self.assertEqual(self.source.read_bytes(), self.MIDI_NOTE)
+        self.assertFalse(list(mp3.parent.glob(".gui-yt-dlp-*")))
+        preview_command, render_command, ffmpeg_command = runner.commands
+        self.assertEqual(preview_command[-2:], [str(self.runtime / "FluidR3_GM.sf3"), str(self.source.resolve())])
+        self.assertEqual(preview_command[:4], render_command[:4])
+        self.assertEqual(preview_command[5:], render_command[5:])
+        self.assertEqual(ffmpeg_command[ffmpeg_command.index("-i") + 1], render_command[render_command.index("-F") + 1])
+        self.assertEqual(ffmpeg_command[ffmpeg_command.index("-c:a") + 1], "libmp3lame")
+        self.assertEqual(ffmpeg_command[ffmpeg_command.index("-q:a") + 1], "2")
+
+    def test_invalid_midi_is_not_published_even_when_fluidsynth_exits_successfully(self):
+        self._link_runtime()
+        (self.workspace / "ffmpeg.exe").touch()
+        invalid = self.MIDI_NOTE[:23] + b"\x01" + self.MIDI_NOTE[24:]
+        self.source.write_bytes(invalid)
+        runner = RecordingRunner()
+        with self.assertRaisesRegex(backend.AppError, "FluidSynth로 MIDI"):
+            scene_backend.convert_scene_file(self.source, "1", "손상", runner)
+        self.assertEqual(len(runner.commands), 1)
+        self.assertFalse(list((self.workspace / "Downloads").glob("*.mp3")))
+        self.assertEqual(self.source.read_bytes(), invalid)
+
+    def test_truncated_midi_track_is_rejected_before_rendering(self):
+        (self.workspace / "ffmpeg.exe").touch()
+        invalid = self.MIDI_NOTE[:22]
+        self.source.write_bytes(invalid)
+        runner = RecordingRunner()
+        with self.assertRaisesRegex(backend.AppError, "MIDI 파일이 손상"):
+            scene_backend.convert_scene_file(self.source, "1", "손상", runner)
+        self.assertFalse(runner.commands)
+        self.assertFalse(list((self.workspace / "Downloads").glob("*.mp3")))
+        self.assertEqual(self.source.read_bytes(), invalid)
+
+    def test_cancelled_midi_render_never_starts_ffmpeg_or_publishes_mp3(self):
+        for sidecar in (self.runtime / "fluidsynth.exe", self.runtime / "FluidR3_GM.sf3", self.workspace / "ffmpeg.exe"):
+            sidecar.touch()
+        runner = RecordingRunner()
+
+        def interrupt(command, **_kwargs):
+            Path(command[command.index("-F") + 1]).write_bytes(b"partial wave")
+            runner.cancel()
+            return []
+
+        with patch.object(runner, "run", side_effect=interrupt) as run:
+            with self.assertRaises(backend.Cancelled):
+                scene_backend.convert_scene_file(self.source, "1", "취소", runner)
+        run.assert_called_once()
+        self.assertFalse(list((self.workspace / "Downloads").glob("*.mp3")))
+        self.assertEqual(self.source.read_bytes(), self.MIDI_NOTE)
+
+    def test_preview_keeps_existing_file_and_mp4_rejects_midi(self):
+        for sidecar in (self.runtime / "fluidsynth.exe", self.runtime / "FluidR3_GM.sf3"):
+            sidecar.touch()
+        runner = RecordingRunner()
+        with self.assertRaises(backend.AppError):
+            scene_backend.render_midi_preview(self.source, self.source, runner)
+        with self.assertRaisesRegex(backend.AppError, "MIDI 파일은 MP3"):
+            convert_scene_video(self.source, "1", "영상", runner, {})
+        self.assertFalse(runner.commands)
+        self.assertEqual(self.source.read_bytes(), self.MIDI_NOTE)
 
 
 class SceneMediaIntegrationTests(unittest.TestCase):

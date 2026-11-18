@@ -5,7 +5,8 @@ from pathlib import Path
 import tempfile
 
 import backend
-from scene_backend import scene_output_name, _select_audio, _positive_number
+from i18n import tr
+from scene_backend import scene_output_name, is_midi_source, _select_audio, _positive_number
 from scene_settings import validate_settings
 
 
@@ -129,6 +130,8 @@ def download_scene_video(url: str, number: str, title: str, runner: backend.Proc
 def convert_scene_video(source: Path, number: str, title: str, runner: backend.ProcessRunner, settings: dict) -> Path:
     scene_output_name(number, title)
     runner.check_cancelled()
+    if is_midi_source(source):
+        raise backend.AppError(tr("MIDI 파일은 MP3로 변환해 주세요."))
     settings = _options(settings)
     try:
         source = Path(source).expanduser().resolve(strict=True)

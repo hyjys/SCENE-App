@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import queue
 import sys
+from tempfile import TemporaryDirectory
 import threading
 import time
 import tkinter as tk
@@ -19,8 +20,9 @@ from ui_translations import tr, get_language, set_language
 from ui_theme import VERSION, BACKGROUND, prepare_ui, configure_fonts, font, font_report, button, label, CheckBox, fit_window, enable_dpi_awareness
 
 from backend import AppError, Cancelled, ProcessRunner, _validate_url, app_dir
+from scene_audio import MciPlayer
 from scene_blackscreen import BlackScreenController
-from scene_backend import convert_scene_file, download_scene_audio, scene_output_name
+from scene_backend import convert_scene_file, download_scene_audio, is_midi_source, render_midi_preview, scene_output_name
 from scene_video import convert_scene_video, download_scene_video
 from scene_settings import DEFAULTS, load_settings, save_settings, validate_settings
 from scene_updates import check_for_update, download_update, launch_installer
@@ -46,6 +48,8 @@ class SceneApp(ctk.CTk):
         self._cancel_requested = False
         self._closing = False
         self._progress_running = False
+        self._midi_player = MciPlayer()
+        self._midi_preview_dir: TemporaryDirectory | None = None
         self.last_output: Path | None = None
         self.last_error: str | None = None
         self.settings = load_settings() if show_dialogs else dict(DEFAULTS)
@@ -72,6 +76,7 @@ class SceneApp(ctk.CTk):
         self._build_interface()
         self.number_var.trace_add("write", self._update_preview)
         self.title_var.trace_add("write", self._update_preview)
+        self.file_var.trace_add("write", self._on_file_changed)
         self.bind("<Return>", lambda _event: self._begin())
         self.bind("<Escape>", lambda _event: self._request_cancel())
         self.bind("<Control-l>", self._focus_url)
@@ -157,8 +162,11 @@ class SceneApp(ctk.CTk):
         self.file_entry.grid(row=1, column=0, sticky="ew")
         self.browse_button = button(file_tab, text=tr("파일 선택"), command=self._browse_file)
         self.browse_button.grid(row=1, column=1, padx=(8, 0))
-        self.file_hint = label(file_tab, text=tr("WAV, M4A, FLAC 등 음원과 영상의 오디오를 MP3로 변환합니다."), muted=True, wraplength=620)
-        self.file_hint.grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 4))
+        self.midi_preview_button = button(file_tab, text=tr("FluidR3 미리듣기"), width=152, command=self._toggle_midi_preview)
+        self.midi_preview_button.grid(row=1, column=2, padx=(8, 0))
+        self.midi_preview_button.grid_remove()
+        self.file_hint = label(file_tab, text=tr("MIDI, WAV, FLAC 등 음원과 영상의 오디오를 MP3로 변환합니다."), muted=True, wraplength=620)
+        self.file_hint.grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 4))
         self.video_toggle = CheckBox(naming, text="영상으로 저장 (H.264 + MP3 · 기본 OFF)", variable=self.video_var, font=font(), command=self._on_video_changed)
         self.video_toggle.grid(row=5,column=0,columnspan=2,sticky="w",pady=(10,0))
 
@@ -209,6 +217,7 @@ class SceneApp(ctk.CTk):
             self.status_var.set("진행 중인 준비 작업을 완료하거나 취소한 뒤 전환하세요.")
             return
         if value == "무대 모드":
+            self._stop_midi_preview(tr("MIDI 미리듣기를 중지했습니다."))
             try:
                 if self.stage is None:
                     from scene_stage import StageWorkspace
@@ -360,6 +369,9 @@ class SceneApp(ctk.CTk):
 
     def destroy(self) -> None:
         self._update_cancel.set()
+        if self._midi_preview_dir is not None and self._runner is not None:
+            self._runner.cancel()
+        self._stop_midi_preview()
         if self.stage is not None:
             self.stage.close()
             self.stage = None
@@ -375,16 +387,37 @@ class SceneApp(ctk.CTk):
             self.filename_var.set(tr("bgm번호_제목.mp3 · 번호와 제목을 입력하세요"))
 
     def _on_mode_changed(self, _event: tk.Event | None = None) -> None:
-        if self.notebook.get():
-            self.action_button.configure(text=tr("다운로드 + MP3 저장") if self.notebook.get() == self.modes[0] else tr("MP3로 변환 + 저장"))
-            if self.video_var.get():
-                self.action_button.configure(text="다운로드 + MP4 저장" if self.notebook.get() == self.modes[0] else "MP4로 변환 + 저장")
+        if self.notebook.get() == self.modes[0]:
+            self._stop_midi_preview(tr("MIDI 미리듣기를 중지했습니다."))
+        self._on_video_changed()
+
+    def _midi_selected(self) -> bool:
+        return self.notebook.get() == self.modes[1] and is_midi_source(self.file_var.get().strip())
+
+    def _on_file_changed(self, *_args: object) -> None:
+        self._stop_midi_preview(tr("MIDI 미리듣기를 중지했습니다."))
+        self._on_video_changed()
 
     def _on_video_changed(self):
+        midi = self._midi_selected()
+        if midi and self.video_var.get():
+            self.video_toggle.deselect()
         self._update_preview()
-        self._on_mode_changed()
-        self.link_hint.configure(text="최고 해상도 영상을 H.264 + MP3 오디오의 MP4로 저장합니다." if self.video_var.get() else tr("오디오 전용 형식 중 가장 높은 비트레이트를 골라 MP3로 저장합니다."))
-        self.file_hint.configure(text="영상 원본을 보존하고 프로젝터용 MP4로 변환합니다." if self.video_var.get() else tr("WAV, M4A, FLAC 등 음원과 영상의 오디오를 MP3로 변환합니다."))
+        video = self.video_var.get()
+        if self.notebook.get() == self.modes[0]:
+            action = "다운로드 + MP4 저장" if video else "다운로드 + MP3 저장"
+        else:
+            action = "MP4로 변환 + 저장" if video else "MP3로 변환 + 저장"
+        self.action_button.configure(text=tr(action))
+        self.link_hint.configure(text=tr("최고 해상도 영상을 H.264 + MP3 오디오의 MP4로 저장합니다." if video else "오디오 전용 형식 중 가장 높은 비트레이트를 골라 MP3로 저장합니다."))
+        if midi:
+            hint = "내장 FluidR3 음색으로 미리듣고 MP3로 저장할 수 있습니다."
+            self.midi_preview_button.grid()
+        else:
+            hint = "영상 원본을 보존하고 프로젝터용 MP4로 변환합니다." if video else "MIDI, WAV, FLAC 등 음원과 영상의 오디오를 MP3로 변환합니다."
+            self.midi_preview_button.grid_remove()
+        self.file_hint.configure(text=tr(hint))
+        self._update_controls()
 
     def _switch_mode(self, _event: tk.Event | None = None) -> str:
         if not self._busy:
@@ -402,6 +435,7 @@ class SceneApp(ctk.CTk):
     def _focus_url(self, _event: tk.Event | None = None) -> str:
         if not self._busy:
             self.notebook.set(self.modes[0])
+            self._on_mode_changed()
             self.url_entry.focus_set()
             self.url_entry.selection_range(0, "end")
         return "break"
@@ -418,7 +452,11 @@ class SceneApp(ctk.CTk):
     def _browse_file(self) -> None:
         if self._busy:
             return
-        selected = filedialog.askopenfilename(parent=self, title="MP4로 변환할 영상 선택" if self.video_var.get() else tr("MP3로 변환할 음원 선택"), filetypes=[(tr("음원 / 영상 파일"), "*.wav *.m4a *.aac *.flac *.ogg *.opus *.wma *.aiff *.aif *.mp3 *.mp4 *.mkv *.webm *.mov"), (tr("모든 파일"), "*.*")])
+        selected = filedialog.askopenfilename(parent=self, title=tr("변환할 파일 선택"), filetypes=[
+            (tr("음원 / 영상 / MIDI 파일"), "*.wav *.m4a *.aac *.flac *.ogg *.opus *.wma *.aiff *.aif *.mp3 *.mp4 *.mkv *.webm *.mov *.mid *.midi"),
+            (tr("MIDI 파일"), "*.mid *.midi"),
+            (tr("모든 파일"), "*.*"),
+        ])
         if selected:
             self.file_var.set(selected)
             if not self.title_var.get().strip():
@@ -439,7 +477,11 @@ class SceneApp(ctk.CTk):
                 source = Path(self.file_var.get().strip()).expanduser()
                 if not self.file_var.get().strip() or not source.is_file():
                     raise AppError(tr("MP3로 변환할 음원 파일을 선택해 주세요."))
-                source = source.resolve()
+                if is_midi_source(source):
+                    if self.video_var.get():
+                        self._on_video_changed()
+                else:
+                    source = source.resolve()
                 dependencies = ("ffmpeg.exe",)
                 operation = (lambda runner: convert_scene_video(source, number, title, runner, dict(self.settings))) if self.video_var.get() else (lambda runner: convert_scene_file(source, number, title, runner))
             for name in dependencies:
@@ -449,6 +491,7 @@ class SceneApp(ctk.CTk):
             self.last_error = str(error)
             self.status_var.set(str(error))
             return
+        self._stop_midi_preview()
         self.status_var.set(tr("최고 비트레이트 오디오를 찾고 있습니다…") if mode == 0 else tr("MP3 변환을 준비하고 있습니다…"))
         self._append_log(tr("\n── 링크 다운로드 + MP3 ──") if mode == 0 else tr("\n── 파일 MP3 변환 ──"))
         output_name = scene_output_name(number, title)
@@ -459,7 +502,56 @@ class SceneApp(ctk.CTk):
         self._append_log(tr("저장할 이름: ") + output_name)
         self._start_job(operation)
 
-    def _start_job(self, operation: Callable[[ProcessRunner], Path]) -> None:
+    def _toggle_midi_preview(self) -> None:
+        if self._closing or self.app_mode != "준비 모드" or not self._midi_selected():
+            return
+        if self._midi_player.path is not None:
+            self._stop_midi_preview(tr("MIDI 미리듣기를 중지했습니다."))
+            return
+        if self._busy:
+            if self._midi_preview_dir is not None:
+                self._request_cancel()
+            return
+        try:
+            source = Path(self.file_var.get().strip()).expanduser()
+            if not source.is_file():
+                raise AppError(tr("미리 들을 MIDI 파일을 선택해 주세요."))
+            self._midi_preview_dir = TemporaryDirectory(prefix="scene-midi-", ignore_cleanup_errors=True)
+        except (AppError, OSError) as error:
+            self.last_error = str(error)
+            self.status_var.set(str(error))
+            return
+        destination = Path(self._midi_preview_dir.name) / "preview.wav"
+        self.status_var.set(tr("FluidR3 미리듣기를 준비하고 있습니다…"))
+        self._append_log(tr("\n── FluidR3 MIDI 미리듣기 ──"))
+        self._start_job(lambda runner: render_midi_preview(source, destination, runner), finished_event="midi_preview_ready")
+
+    def _stop_midi_preview(self, status: str | None = None) -> None:
+        playing = self._midi_player.path is not None
+        self._midi_player.close()
+        if self._midi_preview_dir is not None:
+            self._midi_preview_dir.cleanup()
+            self._midi_preview_dir = None
+        if playing and status is not None:
+            self.status_var.set(status)
+            self._update_controls()
+
+    def _play_midi_preview(self, path: Path) -> None:
+        if self._cancel_requested or self._closing:
+            self._stop_midi_preview()
+            self._finish_job()
+            self.status_var.set(tr("작업을 취소했습니다."))
+            return
+        try:
+            self._midi_player.open(path)
+            self._midi_player.play()
+        except (AppError, OSError) as error:
+            self._job_failed("failed", str(error))
+            return
+        self._finish_job()
+        self.status_var.set(tr("FluidR3 음색으로 MIDI를 재생 중입니다."))
+
+    def _start_job(self, operation: Callable[[ProcessRunner], Path], *, finished_event: str = "completed") -> None:
         self._busy = True
         self._cancel_requested = False
         self.last_error = None
@@ -471,7 +563,7 @@ class SceneApp(ctk.CTk):
 
         def work() -> None:
             try:
-                self._events.put(("completed", operation(runner)))
+                self._events.put((finished_event, operation(runner)))
             except Cancelled as error:
                 self._events.put(("cancelled", str(error)))
             except AppError as error:
@@ -489,9 +581,20 @@ class SceneApp(ctk.CTk):
         # CTkTabview retains the active page while its mode selector is disabled.
         self.notebook.configure(state="disabled" if self._busy else "normal")
         self.cancel_button.configure(state="normal" if self._busy and not self._cancel_requested else "disabled")
-        self.video_toggle.configure(state="disabled" if self._busy else "normal")
+        self.video_toggle.configure(state="disabled" if self._busy or self._midi_selected() else "normal")
+        text = "FluidR3 미리듣기"
+        available = not self._busy
+        if self._midi_player.path is not None:
+            text = "미리듣기 정지"
+        elif self._midi_preview_dir is not None:
+            text = "미리듣기 취소"
+            available = not self._cancel_requested
+        self.midi_preview_button.configure(text=tr(text), state="normal" if available else "disabled")
 
     def _request_cancel(self) -> None:
+        if self._midi_player.path is not None:
+            self._stop_midi_preview(tr("MIDI 미리듣기를 중지했습니다."))
+            return
         if not self._busy or self._runner is None or self._cancel_requested:
             return
         self._cancel_requested = True
@@ -513,6 +616,8 @@ class SceneApp(ctk.CTk):
                     self.status_var.set(str(payload))
                 elif event == "progress":
                     self._set_progress(payload)
+                elif event == "midi_preview_ready":
+                    self._play_midi_preview(Path(payload))
                 elif event == "completed":
                     self.last_output = Path(payload)
                     self._finish_job()
@@ -520,20 +625,30 @@ class SceneApp(ctk.CTk):
                     self._append_log(tr("저장 완료: {path}", path=self.last_output))
                     self._set_progress(100)
                 elif event in {"cancelled", "failed"}:
-                    self.last_error = str(payload)
-                    self._finish_job()
-                    self.status_var.set(tr("작업을 취소했습니다.") if event == "cancelled" else tr("작업에 실패했습니다. 로그를 확인해 주세요."))
-                    self._append_log(str(payload))
-                    self.show_log_var.set(True)
-                    self._toggle_log()
-                    if event == "failed" and self._show_dialogs and not self._closing:
-                        messagebox.showerror(tr("SCENE · 작업 오류"), str(payload), parent=self)
+                    self._job_failed(event, str(payload))
         except queue.Empty:
             pass
+        if self._midi_player.path is not None:
+            try:
+                if self._midi_player.mode() == "stopped":
+                    self._stop_midi_preview(tr("MIDI 미리듣기를 마쳤습니다."))
+            except (AppError, OSError) as error:
+                self._job_failed("failed", str(error))
         if self._closing and not self._busy and (self._worker is None or not self._worker.is_alive()):
             self.destroy()
             return
         self.after(60, self._poll_events)
+
+    def _job_failed(self, event: str, message: str) -> None:
+        self.last_error = message
+        self._stop_midi_preview()
+        self._finish_job()
+        self.status_var.set(tr("작업을 취소했습니다.") if event == "cancelled" else tr("작업에 실패했습니다. 로그를 확인해 주세요."))
+        self._append_log(message)
+        self.show_log_var.set(True)
+        self._toggle_log()
+        if event == "failed" and self._show_dialogs and not self._closing:
+            messagebox.showerror(tr("SCENE · 작업 오류"), message, parent=self)
 
     def _finish_job(self) -> None:
         self._busy = False

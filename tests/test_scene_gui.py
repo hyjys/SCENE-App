@@ -196,6 +196,59 @@ class SceneGuiTests(unittest.TestCase):
             self.assertEqual(convert.call_args.args[:3], (source.resolve(), "13", "오프닝"))
             self.assertEqual(self.app.last_output, result)
 
+    def test_midi_preview_can_play_before_naming_and_releases_its_wav(self):
+        self.app.notebook.set(self.app.modes[1])
+        self.app.number_var.set("")
+        self.app.title_var.set("")
+        self.app.video_toggle.select()
+        player = self.app._midi_player
+
+        def render(_source, destination, _runner):
+            destination.write_bytes(b"preview")
+            return destination
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "방송.MIDI"
+            source.touch()
+            self.app.file_var.set(str(source))
+            self.assertFalse(self.app.video_var.get())
+            self.assertEqual(self.app.video_toggle.cget("state"), "disabled")
+            with patch.object(scene, "render_midi_preview", side_effect=render) as synthesize, patch.object(
+                player, "_send", side_effect=lambda command: "2000" if command.endswith("length") else "playing"
+            ) as mci:
+                self.app.midi_preview_button.invoke()
+                self.wait_for_job()
+                synthesize.assert_called_once()
+                self.assertEqual(synthesize.call_args.args[0], source)
+                self.assertIsNone(self.app.last_output)
+                wav = player.path
+                self.assertTrue(wav.is_file())
+                mci.assert_any_call(f"play {player.alias}")
+                self.assertEqual(self.app.midi_preview_button.cget("text"), "미리듣기 정지")
+                self.app.file_var.set(str(source.with_name("다른.mid")))
+                mci.assert_any_call(f"close {player.alias}")
+                self.assertFalse(wav.parent.exists())
+                self.assertIsNone(player.path)
+
+    def test_cancelled_preview_does_not_play_when_render_has_just_completed(self):
+        self.app.notebook.set(self.app.modes[1])
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "preview.mid"
+            source.touch()
+            self.app.file_var.set(str(source))
+            with patch.object(scene, "render_midi_preview", side_effect=lambda _source, destination, _runner: destination), patch.object(
+                self.app._midi_player, "open"
+            ) as open_audio:
+                self.app._toggle_midi_preview()
+                work_dir = Path(self.app._midi_preview_dir.name)
+                self.app._worker.join(timeout=1)
+                self.assertFalse(self.app._worker.is_alive())
+                self.app._toggle_midi_preview()
+                self.wait_for_job()
+                open_audio.assert_not_called()
+                self.assertFalse(work_dir.exists())
+                self.assertIn("취소", self.app.status_var.get())
+
     def test_busy_disables_form_and_rejects_duplicate_start(self):
         started = threading.Event()
         release = threading.Event()
