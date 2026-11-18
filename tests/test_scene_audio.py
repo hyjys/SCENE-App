@@ -1,6 +1,7 @@
 """Stage audio cue selection and live transport safety without a sound device."""
 
 from pathlib import Path
+import gc
 import hashlib
 import json
 import queue
@@ -351,6 +352,9 @@ class FolderFrameTests(unittest.TestCase):
         for timer in self.root.tk.call("after", "info"):
             self.root.tk.call("after", "cancel", timer)
         self.root.destroy()
+        del self.frame, self.root
+        # Tk font finalizers must run on the thread that owns the interpreter.
+        gc.collect()
         self.assertEqual(self.errors, [])
 
     def make_file(self, name):
